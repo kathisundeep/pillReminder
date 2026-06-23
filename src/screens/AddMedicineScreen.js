@@ -27,6 +27,16 @@ import DaysSelector from '../components/DaysSelector';
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
 
+const QUICK_TIMES = [
+  { label: 'Morning', time: '08:00' },
+  { label: 'Before lunch', time: '12:30' },
+  { label: 'After lunch', time: '13:30' },
+  { label: 'Evening', time: '17:00' },
+  { label: 'Before dinner', time: '19:00' },
+  { label: 'After dinner', time: '21:00' },
+  { label: 'Night', time: '22:00' },
+];
+
 function pad(n) {
   return String(n).padStart(2, '0');
 }
@@ -45,7 +55,7 @@ export default function AddMedicineScreen({ route, navigation }) {
   const [times, setTimes] = useState([]);
   const [snoozeMinutes, setSnoozeMinutes] = useState(10);
   const [frequency, setFrequency] = useState('daily');
-  const [daysOfWeek, setDaysOfWeek] = useState([0, 1, 2, 3, 4, 5, 6]);
+  const [daysOfWeek, setDaysOfWeek] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerInitial, setPickerInitial] = useState({ hour: 8, minute: 0 });
   const [busy, setBusy] = useState(false);
@@ -68,7 +78,7 @@ export default function AddMedicineScreen({ route, navigation }) {
       setTimes(med.times || []);
       setSnoozeMinutes(med.snoozeMinutes || 10);
       setFrequency(med.frequency || 'daily');
-      setDaysOfWeek(med.daysOfWeek || [0, 1, 2, 3, 4, 5, 6]);
+      setDaysOfWeek(med.daysOfWeek || []);
       setOriginalNotifIds(med.notificationIds || []);
     })();
   }, [editingId]);
@@ -192,8 +202,35 @@ export default function AddMedicineScreen({ route, navigation }) {
           </TouchableOpacity>
         ))}
         <TouchableOpacity style={styles.addTimeBtn} onPress={openPicker}>
-          <Text style={styles.addTimeText}>+ Add time</Text>
+          <Text style={styles.addTimeText}>+ Custom time</Text>
         </TouchableOpacity>
+      </View>
+
+      <Text style={styles.subLabel}>Quick add</Text>
+      <View style={styles.timesWrap}>
+        {QUICK_TIMES.map((q) => {
+          const already = times.includes(q.time);
+          return (
+            <TouchableOpacity
+              key={q.label}
+              style={[styles.quickChip, already && styles.quickChipOn]}
+              onPress={() =>
+                already
+                  ? setTimes(times.filter((t) => t !== q.time))
+                  : setTimes([...times, q.time].sort())
+              }
+            >
+              <Text
+                style={[
+                  styles.quickChipText,
+                  already && styles.quickChipTextOn,
+                ]}
+              >
+                {q.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <Text style={styles.label}>Frequency</Text>
@@ -295,6 +332,30 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 8,
   },
+  subLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#888',
+    marginTop: 8,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  quickChip: {
+    borderWidth: 1,
+    borderColor: '#bbb',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  quickChipOn: {
+    backgroundColor: '#4CAF50',
+    borderColor: '#4CAF50',
+  },
+  quickChipText: { color: '#555', fontWeight: '600', fontSize: 13 },
+  quickChipTextOn: { color: '#fff' },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',

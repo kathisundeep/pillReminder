@@ -104,35 +104,39 @@ export default function WheelTimePicker({
         <View style={styles.sheet}>
           <Text style={styles.title}>Pick time</Text>
 
-          <View style={styles.wheelRow}>
-            <View pointerEvents="none" style={styles.highlight} />
+          <View style={styles.wheelOuter}>
+            <View style={styles.wheelRow}>
+              <View pointerEvents="none" style={styles.highlight} />
 
-            <Column
-              items={Array.from({ length: 12 }, (_, i) => i + 1)}
-              initialIndex={initH12 - 1}
-              onChange={(i) => {
-                stateRef.current.h12 = i + 1;
-              }}
-              width={70}
-            />
-            <Text style={styles.sep}>:</Text>
-            <Column
-              items={Array.from({ length: 60 }, (_, i) => i)}
-              initialIndex={initialMinute}
-              formatter={(n) => String(n).padStart(2, '0')}
-              onChange={(i) => {
-                stateRef.current.minute = i;
-              }}
-              width={70}
-            />
-            <Column
-              items={['AM', 'PM']}
-              initialIndex={initIsPM ? 1 : 0}
-              onChange={(i) => {
-                stateRef.current.isPM = i === 1;
-              }}
-              width={70}
-            />
+              <Column
+                items={Array.from({ length: 12 }, (_, i) => i + 1)}
+                initialIndex={initH12 - 1}
+                onChange={(i) => {
+                  stateRef.current.h12 = i + 1;
+                }}
+                width={70}
+              />
+              <View style={styles.sepWrap}>
+                <Text style={styles.sep}>:</Text>
+              </View>
+              <Column
+                items={Array.from({ length: 60 }, (_, i) => i)}
+                initialIndex={initialMinute}
+                formatter={(n) => String(n).padStart(2, '0')}
+                onChange={(i) => {
+                  stateRef.current.minute = i;
+                }}
+                width={70}
+              />
+              <Column
+                items={['AM', 'PM']}
+                initialIndex={initIsPM ? 1 : 0}
+                onChange={(i) => {
+                  stateRef.current.isPM = i === 1;
+                }}
+                width={70}
+              />
+            </View>
           </View>
 
           <View style={styles.btnRow}>
@@ -170,21 +174,30 @@ const styles = StyleSheet.create({
     color: '#222',
     marginBottom: 8,
   },
+  wheelOuter: {
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
   wheelRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    alignItems: 'center',
+    height: VISIBLE * ITEM_HEIGHT,
     position: 'relative',
-    paddingVertical: 8,
   },
   highlight: {
     position: 'absolute',
-    top: PAD + 8,
-    left: 8,
-    right: 8,
+    top: PAD,
+    left: 0,
+    right: 0,
     height: ITEM_HEIGHT,
     backgroundColor: '#f1f5f1',
     borderRadius: 10,
+  },
+  sepWrap: {
+    width: 12,
+    height: VISIBLE * ITEM_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   item: {
     height: ITEM_HEIGHT,
@@ -197,7 +210,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '700',
     color: '#222',
-    marginHorizontal: 2,
   },
   btnRow: {
     flexDirection: 'row',
