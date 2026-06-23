@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -7,21 +7,28 @@ import {
   StyleSheet,
   ScrollView,
   Alert,
-  Platform,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { addMedicine, getSession } from '../utils/storage';
 import {
-  scheduleDailyAlarm,
+  addMedicine,
+  getSession,
+  getMedicine,
+  updateMedicine,
+  deleteMedicine,
+} from '../utils/storage';
+import {
+  scheduleForMedicine,
+  scheduleTestAlarm,
   ensureNotificationSetup,
+  cancelManyNotifications,
 } from '../utils/notifications';
+import WheelTimePicker from '../components/WheelTimePicker';
+import DaysSelector from '../components/DaysSelector';
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
 
 function pad(n) {
   return String(n).padStart(2, '0');
 }
-
 function formatTime(hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
   const ampm = h >= 12 ? 'PM' : 'AM';
@@ -29,26 +36,62 @@ function formatTime(hhmm) {
   return `${hh}:${pad(m)} ${ampm}`;
 }
 
-export default function AddMedicineScreen({ navigation }) {
+export default function AddMedicineScreen({ route, navigation }) {
+  const editingId = route.params?.medicineId || null;
+  const isEdit = !!editingId;
+
   const [name, setName] = useState('');
   const [times, setTimes] = useState([]);
   const [snoozeMinutes, setSnoozeMinutes] = useState(10);
-  const [showPicker, setShowPicker] = useState(false);
+  const [frequency, setFrequency] = useState('daily');
+  const [daysOfWeek, setDaysOfWeek] = useState([0, 1, 2, 3, 4, 5, 6]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [originalNotifIds, setOriginalNotifIds] = useState([]);
 
-  const onPickTime = (event, selected) => {
-    if (Platform.OS === 'android') setShowPicker(false);
-    if (!selected) return;
-    const hhmm = `${pad(selected.getHours())}:${pad(selected.getMinutes())}`;
+  useEffect(() => {
+    navigation.setOptions({ title: isEdit ? 'Edit medicine' : 'Add medicine' });
+    if (!isEdit) return;
+    (async () => {
+      const user = await getSession();
+      const med = await getMedicine(user, editingId);
+      if (!med) return;
+      setName(med.name);
+      setTimes(med.times || []);
+      setSnoozeMinutes(med.snoozeMinutes || 10);
+      setFrequency(med.frequency || 'daily');
+      setDaysOfWeek(med.daysOfWeek || [0, 1, 2, 3, 4, 5, 6]);
+      setOriginalNotifIds(med.notificationIds || []);
+    })();
+  }, [editingId]);
+
+  const onPickerConfirm = ({ hour, minute }) => {
+    const hhmm = `${pad(hour)}:${pad(minute)}`;
     if (!times.includes(hhmm)) setTimes([...times, hhmm].sort());
+    setPickerOpen(false);
   };
 
   const removeTime = (t) => setTimes(times.filter((x) => x !== t));
+
+  const onTestAlarm = async () => {
+    const ok = await ensureNotificationSetup();
+    if (!ok) {
+      Alert.alert('Permission needed', 'Enable notifications first.');
+      return;
+    }
+    await scheduleTestAlarm({ seconds: 30 });
+    Alert.alert(
+      'Test alarm scheduled',
+      'A test alarm will ring in 30 seconds. If it does not, your phone may be blocking the app — check battery / notification settings.'
+    );
+  };
 
   const save = async () => {
     if (!name.trim()) return Alert.alert('Missing', 'Enter medicine name.');
     if (times.length === 0)
       return Alert.alert('Missing', 'Add at least one time.');
+    if (frequency === 'weekly' && daysOfWeek.length === 0)
+      return Alert.alert('Missing', 'Pick at least one day.');
 
     setBusy(true);
     const ok = await ensureNotificationSetup();
@@ -62,33 +105,57 @@ export default function AddMedicineScreen({ navigation }) {
     }
 
     const user = await getSession();
-    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const notificationIds = [];
-    for (const t of times) {
-      const [h, m] = t.split(':').map(Number);
-      const nid = await scheduleDailyAlarm({
-        medicineId: id,
-        medicineName: name.trim(),
-        hour: h,
-        minute: m,
-      });
-      notificationIds.push(nid);
-    }
 
-    await addMedicine(user, {
+    if (isEdit) await cancelManyNotifications(originalNotifIds);
+
+    const id = isEdit
+      ? editingId
+      : `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    const medDraft = {
       id,
       name: name.trim(),
       times,
       snoozeMinutes,
-      notificationIds,
+      frequency,
+      daysOfWeek: frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6],
       createdAt: new Date().toISOString(),
-    });
+    };
+
+    const notificationIds = await scheduleForMedicine(medDraft);
+    medDraft.notificationIds = notificationIds;
+
+    if (isEdit) {
+      await updateMedicine(user, id, medDraft);
+    } else {
+      await addMedicine(user, medDraft);
+    }
     setBusy(false);
     navigation.goBack();
   };
 
+  const onDelete = () => {
+    Alert.alert('Delete medicine', `Remove "${name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          await cancelManyNotifications(originalNotifIds);
+          const user = await getSession();
+          await deleteMedicine(user, editingId);
+          navigation.goBack();
+        },
+      },
+    ]);
+  };
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 20 }}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={{ padding: 20, paddingBottom: 80 }}
+      keyboardShouldPersistTaps="handled"
+    >
       <Text style={styles.label}>Medicine name</Text>
       <TextInput
         style={styles.input}
@@ -110,20 +177,50 @@ export default function AddMedicineScreen({ navigation }) {
         ))}
         <TouchableOpacity
           style={styles.addTimeBtn}
-          onPress={() => setShowPicker(true)}
+          onPress={() => setPickerOpen(true)}
         >
           <Text style={styles.addTimeText}>+ Add time</Text>
         </TouchableOpacity>
       </View>
 
-      {showPicker && (
-        <DateTimePicker
-          value={new Date()}
-          mode="time"
-          is24Hour={false}
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={onPickTime}
-        />
+      <Text style={styles.label}>Frequency</Text>
+      <View style={styles.segment}>
+        <TouchableOpacity
+          style={[
+            styles.segmentItem,
+            frequency === 'daily' && styles.segmentItemActive,
+          ]}
+          onPress={() => setFrequency('daily')}
+        >
+          <Text
+            style={[
+              styles.segmentText,
+              frequency === 'daily' && styles.segmentTextActive,
+            ]}
+          >
+            Daily
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.segmentItem,
+            frequency === 'weekly' && styles.segmentItemActive,
+          ]}
+          onPress={() => setFrequency('weekly')}
+        >
+          <Text
+            style={[
+              styles.segmentText,
+              frequency === 'weekly' && styles.segmentTextActive,
+            ]}
+          >
+            Specific days
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {frequency === 'weekly' && (
+        <DaysSelector value={daysOfWeek} onChange={setDaysOfWeek} />
       )}
 
       <Text style={styles.label}>Snooze duration</Text>
@@ -150,8 +247,28 @@ export default function AddMedicineScreen({ navigation }) {
       </View>
 
       <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={busy}>
-        <Text style={styles.saveBtnText}>{busy ? 'Saving...' : 'Save'}</Text>
+        <Text style={styles.saveBtnText}>
+          {busy ? 'Saving...' : isEdit ? 'Save changes' : 'Save'}
+        </Text>
       </TouchableOpacity>
+
+      <TouchableOpacity style={styles.testBtn} onPress={onTestAlarm}>
+        <Text style={styles.testBtnText}>Test alarm in 30s</Text>
+      </TouchableOpacity>
+
+      {isEdit && (
+        <TouchableOpacity style={styles.deleteBtn} onPress={onDelete}>
+          <Text style={styles.deleteBtnText}>Delete medicine</Text>
+        </TouchableOpacity>
+      )}
+
+      <WheelTimePicker
+        visible={pickerOpen}
+        initialHour={8}
+        initialMinute={0}
+        onCancel={() => setPickerOpen(false)}
+        onConfirm={onPickerConfirm}
+      />
     </ScrollView>
   );
 }
@@ -172,7 +289,7 @@ const styles = StyleSheet.create({
     padding: 14,
     fontSize: 16,
   },
-  timesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  timesWrap: { flexDirection: 'row', flexWrap: 'wrap' },
   timeChip: {
     backgroundColor: '#e8f5e9',
     paddingVertical: 8,
@@ -190,7 +307,22 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   addTimeText: { color: '#fff', fontWeight: '700' },
-  snoozeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: '#eee',
+    borderRadius: 10,
+    padding: 4,
+  },
+  segmentItem: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  segmentItemActive: { backgroundColor: '#fff', elevation: 1 },
+  segmentText: { color: '#666', fontWeight: '600' },
+  segmentTextActive: { color: '#222' },
+  snoozeRow: { flexDirection: 'row', flexWrap: 'wrap' },
   snoozeOption: {
     borderWidth: 1,
     borderColor: '#ccc',
@@ -207,11 +339,31 @@ const styles = StyleSheet.create({
   snoozeOptionText: { color: '#333', fontWeight: '600' },
   snoozeOptionTextActive: { color: '#fff' },
   saveBtn: {
-    marginTop: 32,
+    marginTop: 24,
     backgroundColor: '#4CAF50',
     padding: 16,
     borderRadius: 8,
     alignItems: 'center',
   },
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  testBtn: {
+    marginTop: 12,
+    backgroundColor: '#fff',
+    borderColor: '#4CAF50',
+    borderWidth: 1,
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  testBtnText: { color: '#4CAF50', fontWeight: '700' },
+  deleteBtn: {
+    marginTop: 12,
+    backgroundColor: '#fff',
+    borderColor: '#e53935',
+    borderWidth: 1,
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  deleteBtnText: { color: '#e53935', fontWeight: '700' },
 });

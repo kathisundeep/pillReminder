@@ -89,6 +89,17 @@ src/
     notifications.js        Schedule / snooze / channel setup
 ```
 
+## Why is my alarm not ringing?
+
+Most likely culprits on Android (in order):
+
+1. **Battery optimization** is killing the app. Open Android Settings → Apps → PillReminder → Battery → set to **Unrestricted** (not "Optimized"). On Xiaomi/Oppo/Vivo there is also a separate "Autostart" toggle that must be ON.
+2. **Notification permission denied.** Settings → Apps → PillReminder → Notifications → enable everything, especially the "Pill Alarms" channel.
+3. **Alarm sound / channel** muted. Tap the "Pill Alarms" notification channel and confirm Importance = "Urgent" and Sound is on.
+4. **Exact alarms permission** (Android 12+). Settings → Apps → PillReminder → Alarms & reminders → enable.
+
+Tap **"Test alarm in 30s"** on the Add/Edit medicine screen to verify everything is wired up. If that fires, real alarms will work too.
+
 ## Known limitations
 
 - Auth is local-only (no server). Each phone has its own user list.

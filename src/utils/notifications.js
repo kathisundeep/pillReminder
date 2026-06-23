@@ -47,7 +47,7 @@ export async function ensureNotificationSetup() {
       },
       {
         identifier: 'SKIP',
-        buttonTitle: 'Skip',
+        buttonTitle: 'Snooze',
         options: { opensAppToForeground: true },
       },
     ]);
@@ -56,49 +56,69 @@ export async function ensureNotificationSetup() {
   return true;
 }
 
-function nextOccurrence(hour, minute) {
-  const now = new Date();
-  const next = new Date();
-  next.setHours(hour, minute, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
-  return next;
+function alarmContent(medicineId, medicineName, titlePrefix = 'Time for your medicine') {
+  return {
+    title: titlePrefix,
+    body: `Take ${medicineName} now`,
+    data: { medicineId, medicineName, type: 'pill-alarm' },
+    sound: 'default',
+    priority: Notifications.AndroidNotificationPriority.MAX,
+    categoryIdentifier: 'pill-alarm-actions',
+    vibrate: [0, 500, 250, 500],
+    sticky: false,
+    autoDismiss: false,
+  };
 }
 
 export async function scheduleDailyAlarm({ medicineId, medicineName, hour, minute }) {
-  const trigger = {
-    hour,
-    minute,
-    repeats: true,
-    channelId: CHANNEL_ID,
-  };
   const id = await Notifications.scheduleNotificationAsync({
-    content: {
-      title: 'Time for your medicine',
-      body: `Take ${medicineName} now`,
-      data: { medicineId, medicineName, type: 'pill-alarm' },
-      sound: 'default',
-      priority: Notifications.AndroidNotificationPriority.MAX,
-      categoryIdentifier: 'pill-alarm-actions',
-      sticky: false,
-      vibrate: [0, 500, 250, 500],
+    content: alarmContent(medicineId, medicineName),
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DAILY,
+      hour,
+      minute,
+      channelId: CHANNEL_ID,
     },
-    trigger,
+  });
+  return id;
+}
+
+export async function scheduleWeeklyAlarm({ medicineId, medicineName, weekday, hour, minute }) {
+  const id = await Notifications.scheduleNotificationAsync({
+    content: alarmContent(medicineId, medicineName),
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+      weekday,
+      hour,
+      minute,
+      channelId: CHANNEL_ID,
+    },
   });
   return id;
 }
 
 export async function scheduleSnooze({ medicineId, medicineName, minutes }) {
   const id = await Notifications.scheduleNotificationAsync({
-    content: {
-      title: 'Snoozed reminder',
-      body: `Take ${medicineName} now`,
-      data: { medicineId, medicineName, type: 'pill-alarm' },
-      sound: 'default',
-      priority: Notifications.AndroidNotificationPriority.MAX,
-      categoryIdentifier: 'pill-alarm-actions',
-      vibrate: [0, 500, 250, 500],
+    content: alarmContent(medicineId, medicineName, 'Snoozed reminder'),
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: Math.max(60, minutes * 60),
+      repeats: false,
+      channelId: CHANNEL_ID,
     },
-    trigger: { seconds: Math.max(60, minutes * 60), channelId: CHANNEL_ID },
+  });
+  return id;
+}
+
+export async function scheduleTestAlarm({ seconds = 30 } = {}) {
+  const id = await Notifications.scheduleNotificationAsync({
+    content: alarmContent('TEST', 'Test Medicine', 'Test alarm'),
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds,
+      repeats: false,
+      channelId: CHANNEL_ID,
+    },
   });
   return id;
 }
@@ -112,4 +132,32 @@ export async function cancelNotification(id) {
 
 export async function cancelManyNotifications(ids) {
   for (const id of ids || []) await cancelNotification(id);
+}
+
+export async function scheduleForMedicine(med) {
+  const ids = [];
+  for (const t of med.times) {
+    const [h, m] = t.split(':').map(Number);
+    if (med.frequency === 'weekly' && med.daysOfWeek?.length) {
+      for (const dow of med.daysOfWeek) {
+        const id = await scheduleWeeklyAlarm({
+          medicineId: med.id,
+          medicineName: med.name,
+          weekday: dow + 1,
+          hour: h,
+          minute: m,
+        });
+        ids.push(id);
+      }
+    } else {
+      const id = await scheduleDailyAlarm({
+        medicineId: med.id,
+        medicineName: med.name,
+        hour: h,
+        minute: m,
+      });
+      ids.push(id);
+    }
+  }
+  return ids;
 }

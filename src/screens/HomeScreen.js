@@ -25,6 +25,15 @@ function formatTime(hhmm) {
   return `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
+const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+function formatSchedule(med) {
+  if (med.frequency === 'weekly' && med.daysOfWeek?.length) {
+    if (med.daysOfWeek.length === 7) return 'Every day';
+    return med.daysOfWeek.map((d) => DAY_LABELS[d]).join(' ');
+  }
+  return 'Every day';
+}
+
 export default function HomeScreen({ navigation }) {
   const [user, setUser] = useState(null);
   const [meds, setMeds] = useState([]);
@@ -109,6 +118,9 @@ export default function HomeScreen({ navigation }) {
           return (
             <TouchableOpacity
               style={[styles.card, taken && styles.cardTaken]}
+              onPress={() =>
+                navigation.navigate('AddMedicine', { medicineId: item.id })
+              }
               onLongPress={() => onDelete(item)}
             >
               <View style={{ flex: 1 }}>
@@ -117,7 +129,7 @@ export default function HomeScreen({ navigation }) {
                   {item.times.map(formatTime).join('  •  ')}
                 </Text>
                 <Text style={styles.medSub}>
-                  Snooze: {item.snoozeMinutes} min
+                  {formatSchedule(item)} · Snooze {item.snoozeMinutes} min
                 </Text>
               </View>
               <View

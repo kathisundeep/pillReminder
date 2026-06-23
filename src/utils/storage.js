@@ -52,6 +52,17 @@ export async function deleteMedicine(user, id) {
   await saveMedicines(user, list.filter((m) => m.id !== id));
 }
 
+export async function updateMedicine(user, id, patch) {
+  const list = await getMedicines(user);
+  const next = list.map((m) => (m.id === id ? { ...m, ...patch } : m));
+  await saveMedicines(user, next);
+}
+
+export async function getMedicine(user, id) {
+  const list = await getMedicines(user);
+  return list.find((m) => m.id === id) || null;
+}
+
 export async function getHistory(user) {
   const raw = await AsyncStorage.getItem(KEYS.HISTORY(user));
   return raw ? JSON.parse(raw) : {};
