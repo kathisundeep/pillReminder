@@ -24,6 +24,7 @@ import {
 } from '../utils/notifications';
 import WheelTimePicker from '../components/WheelTimePicker';
 import DaysSelector from '../components/DaysSelector';
+import { pickRingtone, shortToneLabel } from '../utils/ringtone';
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
 
@@ -60,6 +61,7 @@ export default function AddMedicineScreen({ route, navigation }) {
   const [pickerInitial, setPickerInitial] = useState({ hour: 8, minute: 0 });
   const [busy, setBusy] = useState(false);
   const [originalNotifIds, setOriginalNotifIds] = useState([]);
+  const [alarmToneUri, setAlarmToneUri] = useState(null);
 
   const openPicker = () => {
     const now = new Date();
@@ -80,6 +82,7 @@ export default function AddMedicineScreen({ route, navigation }) {
       setFrequency(med.frequency || 'daily');
       setDaysOfWeek(med.daysOfWeek || []);
       setOriginalNotifIds(med.notificationIds || []);
+      setAlarmToneUri(med.alarmToneUri || null);
     })();
   }, [editingId]);
 
@@ -141,6 +144,7 @@ export default function AddMedicineScreen({ route, navigation }) {
         snoozeMinutes,
         frequency,
         daysOfWeek: frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6],
+        alarmToneUri: alarmToneUri || null,
         createdAt: new Date().toISOString(),
       };
 
@@ -273,6 +277,30 @@ export default function AddMedicineScreen({ route, navigation }) {
         <DaysSelector value={daysOfWeek} onChange={setDaysOfWeek} />
       )}
 
+      <Text style={styles.label}>Alarm tone</Text>
+      <TouchableOpacity
+        style={styles.toneRow}
+        onPress={async () => {
+          try {
+            const uri = await pickRingtone(alarmToneUri);
+            if (uri !== null) setAlarmToneUri(uri);
+          } catch (e) {
+            Alert.alert('Picker error', String(e?.message || e));
+          }
+        }}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.toneTitle}>{shortToneLabel(alarmToneUri)}</Text>
+          <Text style={styles.toneSub}>Tap to choose from phone</Text>
+        </View>
+        <Text style={styles.toneArrow}>›</Text>
+      </TouchableOpacity>
+      {alarmToneUri && (
+        <TouchableOpacity onPress={() => setAlarmToneUri(null)}>
+          <Text style={styles.clearTone}>Reset to default beep</Text>
+        </TouchableOpacity>
+      )}
+
       <Text style={styles.label}>Snooze duration</Text>
       <View style={styles.snoozeRow}>
         {SNOOZE_OPTIONS.map((m) => (
@@ -356,6 +384,22 @@ const styles = StyleSheet.create({
   },
   quickChipText: { color: '#555', fontWeight: '600', fontSize: 13 },
   quickChipTextOn: { color: '#fff' },
+  toneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    padding: 14,
+    borderRadius: 10,
+  },
+  toneTitle: { fontSize: 15, color: '#222', fontWeight: '600' },
+  toneSub: { fontSize: 12, color: '#888', marginTop: 2 },
+  toneArrow: { fontSize: 24, color: '#888' },
+  clearTone: {
+    color: '#4CAF50',
+    marginTop: 8,
+    fontSize: 13,
+    textDecorationLine: 'underline',
+  },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,30 +7,104 @@ import {
   Vibration,
 } from 'react-native';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { getSession, recordDose, getMedicines } from '../utils/storage';
+import { Audio, InterruptionModeAndroid } from 'expo-av';
+import { getSession, recordDose, getMedicines, getMedicine } from '../utils/storage';
 import { scheduleSnooze } from '../utils/notifications';
+
+const ALARM_PATTERN = [0, 800, 400, 800, 400, 800];
 
 export default function AlarmScreen({ route, navigation }) {
   const { medicineId, medicineName } = route.params || {};
+  const soundRef = useRef(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     activateKeepAwakeAsync('alarm');
-    Vibration.vibrate([0, 800, 400, 800], true);
+    Vibration.vibrate(ALARM_PATTERN, true);
+
+    (async () => {
+      try {
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          allowsRecordingIOS: false,
+          shouldDuckAndroid: false,
+          interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+          staysActiveInBackground: true,
+        });
+
+        let source = require('../../assets/sounds/alarm.wav');
+        if (medicineId && medicineId !== 'TEST') {
+          try {
+            const user = await getSession();
+            if (user) {
+              const med = await getMedicine(user, medicineId);
+              if (med?.alarmToneUri) source = { uri: med.alarmToneUri };
+            }
+          } catch (e) {}
+        }
+
+        const { sound } = await Audio.Sound.createAsync(source, {
+          isLooping: true,
+          volume: 1.0,
+          shouldPlay: true,
+        });
+        if (cancelled) {
+          await sound.unloadAsync();
+          return;
+        }
+        soundRef.current = sound;
+      } catch (e) {
+        try {
+          const fallback = await Audio.Sound.createAsync(
+            require('../../assets/sounds/alarm.wav'),
+            { isLooping: true, volume: 1.0, shouldPlay: true }
+          );
+          if (cancelled) {
+            await fallback.sound.unloadAsync();
+            return;
+          }
+          soundRef.current = fallback.sound;
+        } catch (_) {}
+      }
+    })();
+
     return () => {
+      cancelled = true;
       Vibration.cancel();
       deactivateKeepAwake('alarm');
+      (async () => {
+        try {
+          if (soundRef.current) {
+            await soundRef.current.stopAsync();
+            await soundRef.current.unloadAsync();
+            soundRef.current = null;
+          }
+        } catch (e) {}
+      })();
     };
   }, []);
 
-  const onTook = async () => {
+  const stopAlarm = async () => {
     Vibration.cancel();
+    try {
+      if (soundRef.current) {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+    } catch (e) {}
+  };
+
+  const onTook = async () => {
+    await stopAlarm();
     const user = await getSession();
     if (user) await recordDose(user, medicineId, 'taken');
     navigation.replace('Home');
   };
 
   const onSkip = async () => {
-    Vibration.cancel();
+    await stopAlarm();
     const user = await getSession();
     if (user) {
       await recordDose(user, medicineId, 'snoozed');
@@ -81,12 +155,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
-  time: {
-    color: '#fff',
-    fontSize: 64,
-    fontWeight: '300',
-    marginBottom: 16,
-  },
+  time: { color: '#fff', fontSize: 64, fontWeight: '300', marginBottom: 16 },
   subtitle: { color: '#c8e6c9', fontSize: 18 },
   medName: {
     color: '#fff',
@@ -101,7 +170,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     marginBottom: 32,
   },
-  btnRow: { flexDirection: 'row', gap: 24 },
+  btnRow: { flexDirection: 'row' },
   btn: {
     width: 140,
     height: 140,

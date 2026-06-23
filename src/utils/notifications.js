@@ -2,7 +2,8 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 
-const CHANNEL_ID = 'pill-alarm';
+const CHANNEL_ID = 'pill-alarm-v2';
+const ALARM_SOUND = 'alarm';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -28,12 +29,15 @@ export async function ensureNotificationSetup() {
   if (status !== 'granted') return false;
 
   if (Platform.OS === 'android') {
+    try {
+      await Notifications.deleteNotificationChannelAsync('pill-alarm');
+    } catch (e) {}
     await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
       name: 'Pill Alarms',
       importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 500, 250, 500],
+      vibrationPattern: [0, 800, 400, 800, 400, 800],
       lightColor: '#4CAF50',
-      sound: 'default',
+      sound: ALARM_SOUND,
       bypassDnd: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       enableVibrate: true,
@@ -66,11 +70,11 @@ function alarmContent(medicineId, medicineName, titlePrefix = 'Time for your med
     title: titlePrefix,
     body: `Take ${medicineName} now`,
     data: { medicineId, medicineName, type: 'pill-alarm' },
-    sound: 'default',
+    sound: ALARM_SOUND,
     priority: Notifications.AndroidNotificationPriority.MAX,
     categoryIdentifier: 'pill-alarm-actions',
-    vibrate: [0, 500, 250, 500],
-    sticky: false,
+    vibrate: [0, 800, 400, 800, 400, 800],
+    sticky: true,
     autoDismiss: false,
   };
 }
