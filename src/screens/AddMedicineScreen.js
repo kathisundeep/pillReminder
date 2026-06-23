@@ -20,6 +20,7 @@ import {
   scheduleTestAlarm,
   ensureNotificationSetup,
   cancelManyNotifications,
+  listScheduled,
 } from '../utils/notifications';
 import WheelTimePicker from '../components/WheelTimePicker';
 import DaysSelector from '../components/DaysSelector';
@@ -46,8 +47,15 @@ export default function AddMedicineScreen({ route, navigation }) {
   const [frequency, setFrequency] = useState('daily');
   const [daysOfWeek, setDaysOfWeek] = useState([0, 1, 2, 3, 4, 5, 6]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerInitial, setPickerInitial] = useState({ hour: 8, minute: 0 });
   const [busy, setBusy] = useState(false);
   const [originalNotifIds, setOriginalNotifIds] = useState([]);
+
+  const openPicker = () => {
+    const now = new Date();
+    setPickerInitial({ hour: now.getHours(), minute: now.getMinutes() });
+    setPickerOpen(true);
+  };
 
   useEffect(() => {
     navigation.setOptions({ title: isEdit ? 'Edit medicine' : 'Add medicine' });
@@ -74,16 +82,21 @@ export default function AddMedicineScreen({ route, navigation }) {
   const removeTime = (t) => setTimes(times.filter((x) => x !== t));
 
   const onTestAlarm = async () => {
-    const ok = await ensureNotificationSetup();
-    if (!ok) {
-      Alert.alert('Permission needed', 'Enable notifications first.');
-      return;
+    try {
+      const ok = await ensureNotificationSetup();
+      if (!ok) {
+        Alert.alert('Permission needed', 'Enable notifications first.');
+        return;
+      }
+      const id = await scheduleTestAlarm({ seconds: 30 });
+      const scheduled = await listScheduled();
+      Alert.alert(
+        'Test alarm scheduled',
+        `id=${id?.slice(0, 8)}... · queue size=${scheduled.length}\nWill ring in ~30s. Lock the phone or background the app to test wake-up behavior.`
+      );
+    } catch (e) {
+      Alert.alert('Scheduling failed', String(e?.message || e));
     }
-    await scheduleTestAlarm({ seconds: 30 });
-    Alert.alert(
-      'Test alarm scheduled',
-      'A test alarm will ring in 30 seconds. If it does not, your phone may be blocking the app — check battery / notification settings.'
-    );
   };
 
   const save = async () => {
@@ -94,44 +107,47 @@ export default function AddMedicineScreen({ route, navigation }) {
       return Alert.alert('Missing', 'Pick at least one day.');
 
     setBusy(true);
-    const ok = await ensureNotificationSetup();
-    if (!ok) {
+    try {
+      const ok = await ensureNotificationSetup();
+      if (!ok) {
+        Alert.alert(
+          'Permission needed',
+          'Enable notifications to schedule alarms.'
+        );
+        return;
+      }
+
+      const user = await getSession();
+      if (isEdit) await cancelManyNotifications(originalNotifIds);
+
+      const id = isEdit
+        ? editingId
+        : `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+      const medDraft = {
+        id,
+        name: name.trim(),
+        times,
+        snoozeMinutes,
+        frequency,
+        daysOfWeek: frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6],
+        createdAt: new Date().toISOString(),
+      };
+
+      const notificationIds = await scheduleForMedicine(medDraft);
+      medDraft.notificationIds = notificationIds;
+
+      if (isEdit) {
+        await updateMedicine(user, id, medDraft);
+      } else {
+        await addMedicine(user, medDraft);
+      }
+      navigation.goBack();
+    } catch (e) {
+      Alert.alert('Save failed', String(e?.message || e));
+    } finally {
       setBusy(false);
-      Alert.alert(
-        'Permission needed',
-        'Enable notifications to schedule alarms.'
-      );
-      return;
     }
-
-    const user = await getSession();
-
-    if (isEdit) await cancelManyNotifications(originalNotifIds);
-
-    const id = isEdit
-      ? editingId
-      : `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-
-    const medDraft = {
-      id,
-      name: name.trim(),
-      times,
-      snoozeMinutes,
-      frequency,
-      daysOfWeek: frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6],
-      createdAt: new Date().toISOString(),
-    };
-
-    const notificationIds = await scheduleForMedicine(medDraft);
-    medDraft.notificationIds = notificationIds;
-
-    if (isEdit) {
-      await updateMedicine(user, id, medDraft);
-    } else {
-      await addMedicine(user, medDraft);
-    }
-    setBusy(false);
-    navigation.goBack();
   };
 
   const onDelete = () => {
@@ -175,10 +191,7 @@ export default function AddMedicineScreen({ route, navigation }) {
             <Text style={styles.timeChipText}>{formatTime(t)}  ×</Text>
           </TouchableOpacity>
         ))}
-        <TouchableOpacity
-          style={styles.addTimeBtn}
-          onPress={() => setPickerOpen(true)}
-        >
+        <TouchableOpacity style={styles.addTimeBtn} onPress={openPicker}>
           <Text style={styles.addTimeText}>+ Add time</Text>
         </TouchableOpacity>
       </View>
@@ -264,8 +277,8 @@ export default function AddMedicineScreen({ route, navigation }) {
 
       <WheelTimePicker
         visible={pickerOpen}
-        initialHour={8}
-        initialMinute={0}
+        initialHour={pickerInitial.hour}
+        initialMinute={pickerInitial.minute}
         onCancel={() => setPickerOpen(false)}
         onConfirm={onPickerConfirm}
       />

@@ -56,6 +56,11 @@ export async function ensureNotificationSetup() {
   return true;
 }
 
+export async function getPermissionStatus() {
+  const p = await Notifications.getPermissionsAsync();
+  return p.status;
+}
+
 function alarmContent(medicineId, medicineName, titlePrefix = 'Time for your medicine') {
   return {
     title: titlePrefix,
@@ -74,9 +79,9 @@ export async function scheduleDailyAlarm({ medicineId, medicineName, hour, minut
   const id = await Notifications.scheduleNotificationAsync({
     content: alarmContent(medicineId, medicineName),
     trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DAILY,
       hour,
       minute,
+      repeats: true,
       channelId: CHANNEL_ID,
     },
   });
@@ -87,10 +92,10 @@ export async function scheduleWeeklyAlarm({ medicineId, medicineName, weekday, h
   const id = await Notifications.scheduleNotificationAsync({
     content: alarmContent(medicineId, medicineName),
     trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
       weekday,
       hour,
       minute,
+      repeats: true,
       channelId: CHANNEL_ID,
     },
   });
@@ -101,7 +106,6 @@ export async function scheduleSnooze({ medicineId, medicineName, minutes }) {
   const id = await Notifications.scheduleNotificationAsync({
     content: alarmContent(medicineId, medicineName, 'Snoozed reminder'),
     trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
       seconds: Math.max(60, minutes * 60),
       repeats: false,
       channelId: CHANNEL_ID,
@@ -114,13 +118,17 @@ export async function scheduleTestAlarm({ seconds = 30 } = {}) {
   const id = await Notifications.scheduleNotificationAsync({
     content: alarmContent('TEST', 'Test Medicine', 'Test alarm'),
     trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
       seconds,
       repeats: false,
       channelId: CHANNEL_ID,
     },
   });
   return id;
+}
+
+export async function listScheduled() {
+  const all = await Notifications.getAllScheduledNotificationsAsync();
+  return all;
 }
 
 export async function cancelNotification(id) {
