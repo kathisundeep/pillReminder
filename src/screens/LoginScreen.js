@@ -9,7 +9,8 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { loginUser, registerUser } from '../utils/storage';
+import { loginUser, registerUser, importLocalMedicinesOnce } from '../utils/storage';
+import { resyncAlarmsFromCloud } from '../utils/sync';
 
 export default function LoginScreen({ navigation }) {
   const [mode, setMode] = useState('login');
@@ -37,6 +38,18 @@ export default function LoginScreen({ navigation }) {
         return;
       }
     }
+    // First cloud login: import any medicines left in old on-device storage,
+    // then (re)schedule local alarms from the cloud list.
+    try {
+      const imported = await importLocalMedicinesOnce();
+      await resyncAlarmsFromCloud();
+      if (imported > 0) {
+        Alert.alert(
+          'Medicines imported',
+          `${imported} medicine(s) from this device were added to your account.`
+        );
+      }
+    } catch (e) {}
     navigation.replace('Home');
   };
 

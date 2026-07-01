@@ -58,7 +58,9 @@
     "extra": {
       "eas": {
         "projectId": "a1f2f3fa-012b-43f4-bfa9-775ec35cfed6"
-      }
+      },
+      "supabaseUrl": "https://accxqbtukprszgwroorq.supabase.co",
+      "supabaseAnonKey": "sb_publishable_RPyqdASQP1dbyc_8OF6oYA_lSEMhOIO"
     },
     "owner": "sandy419",
     "runtimeVersion": {

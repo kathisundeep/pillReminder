@@ -21,6 +21,7 @@ import {
   sweepMissedDoses,
   notifyGuardianTaken,
 } from './src/utils/guardian';
+import { resyncAlarmsFromCloud } from './src/utils/sync';
 
 const Stack = createNativeStackNavigator();
 
@@ -33,6 +34,9 @@ export default function App() {
       await ensureNotificationSetup();
       const user = await getSession();
       setInitialRoute(user ? 'Home' : 'Login');
+      // If already logged in, re-arm local alarms from the cloud medicine list
+      // (so alarms work after a reboot or on a freshly-signed-in device).
+      if (user) resyncAlarmsFromCloud();
       // Guardian: register for push (to be a guardian), schedule the
       // periodic background sweep, and run one sweep right away.
       registerForPushTokenAsync();
