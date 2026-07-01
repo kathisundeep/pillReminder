@@ -7,26 +7,36 @@ import {
   StyleSheet,
   ScrollView,
   Alert,
+  Switch,
 } from 'react-native';
 import {
   addMedicine,
   getSession,
   getMedicine,
+  getMedicines,
   updateMedicine,
   deleteMedicine,
 } from '../utils/storage';
 import {
-  scheduleForMedicine,
-  scheduleTestAlarm,
+  resyncAlarms,
   ensureNotificationSetup,
-  cancelManyNotifications,
-  listScheduled,
 } from '../utils/notifications';
 import WheelTimePicker from '../components/WheelTimePicker';
 import DaysSelector from '../components/DaysSelector';
 import { pickRingtone, shortToneLabel } from '../utils/ringtone';
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
+
+const TABLET_COLORS = [
+  { name: 'White', hex: '#FFFFFF' },
+  { name: 'Red', hex: '#E53935' },
+  { name: 'Orange', hex: '#FB8C00' },
+  { name: 'Yellow', hex: '#FDD835' },
+  { name: 'Green', hex: '#43A047' },
+  { name: 'Blue', hex: '#1E88E5' },
+  { name: 'Pink', hex: '#EC407A' },
+  { name: 'Brown', hex: '#8D6E63' },
+];
 
 const QUICK_TIMES = [
   { label: 'Morning', time: '08:00' },
@@ -53,6 +63,8 @@ export default function AddMedicineScreen({ route, navigation }) {
   const isEdit = !!editingId;
 
   const [name, setName] = useState('');
+  const [names, setNames] = useState([]);
+  const [nameInput, setNameInput] = useState('');
   const [times, setTimes] = useState([]);
   const [snoozeMinutes, setSnoozeMinutes] = useState(10);
   const [frequency, setFrequency] = useState('daily');
@@ -62,6 +74,8 @@ export default function AddMedicineScreen({ route, navigation }) {
   const [busy, setBusy] = useState(false);
   const [originalNotifIds, setOriginalNotifIds] = useState([]);
   const [alarmToneUri, setAlarmToneUri] = useState(null);
+  const [alertGuardian, setAlertGuardian] = useState(true);
+  const [color, setColor] = useState('#FFFFFF');
 
   const openPicker = () => {
     const now = new Date();
@@ -83,6 +97,8 @@ export default function AddMedicineScreen({ route, navigation }) {
       setDaysOfWeek(med.daysOfWeek || []);
       setOriginalNotifIds(med.notificationIds || []);
       setAlarmToneUri(med.alarmToneUri || null);
+      setAlertGuardian(med.alertGuardian !== false);
+      setColor(med.color || '#FFFFFF');
     })();
   }, [editingId]);
 
@@ -94,26 +110,30 @@ export default function AddMedicineScreen({ route, navigation }) {
 
   const removeTime = (t) => setTimes(times.filter((x) => x !== t));
 
-  const onTestAlarm = async () => {
-    try {
-      const ok = await ensureNotificationSetup();
-      if (!ok) {
-        Alert.alert('Permission needed', 'Enable notifications first.');
-        return;
-      }
-      const id = await scheduleTestAlarm({ seconds: 30 });
-      const scheduled = await listScheduled();
-      Alert.alert(
-        'Test alarm scheduled',
-        `id=${id?.slice(0, 8)}... · queue size=${scheduled.length}\nWill ring in ~30s. Lock the phone or background the app to test wake-up behavior.`
-      );
-    } catch (e) {
-      Alert.alert('Scheduling failed', String(e?.message || e));
-    }
+  const addName = () => {
+    const n = nameInput.trim();
+    if (!n) return;
+    if (!names.some((x) => x.name === n))
+      setNames([...names, { name: n, color: color || '#FFFFFF' }]);
+    setNameInput('');
   };
+  const removeName = (n) => setNames(names.filter((x) => x.name !== n));
 
   const save = async () => {
-    if (!name.trim()) return Alert.alert('Missing', 'Enter medicine name.');
+    // Collect medicine name(s) with their colour. Edit mode is a single
+    // medicine; create mode can batch several that share this schedule.
+    let entries; // [{ name, color }]
+    if (isEdit) {
+      if (!name.trim()) return Alert.alert('Missing', 'Enter medicine name.');
+      entries = [{ name: name.trim(), color: color || '#FFFFFF' }];
+    } else {
+      const pending = nameInput.trim();
+      entries = [...names];
+      if (pending && !entries.some((e) => e.name === pending))
+        entries.push({ name: pending, color: color || '#FFFFFF' });
+      if (entries.length === 0)
+        return Alert.alert('Missing', 'Add at least one medicine name.');
+    }
     if (times.length === 0)
       return Alert.alert('Missing', 'Add at least one time.');
     if (frequency === 'weekly' && daysOfWeek.length === 0)
@@ -131,31 +151,49 @@ export default function AddMedicineScreen({ route, navigation }) {
       }
 
       const user = await getSession();
-      if (isEdit) await cancelManyNotifications(originalNotifIds);
+      const sharedDays =
+        frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
 
-      const id = isEdit
-        ? editingId
-        : `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-
-      const medDraft = {
+      const buildDraft = (id, medName, medColor) => ({
         id,
-        name: name.trim(),
+        name: medName,
         times,
         snoozeMinutes,
         frequency,
-        daysOfWeek: frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6],
+        daysOfWeek: sharedDays,
         alarmToneUri: alarmToneUri || null,
+        alertGuardian,
+        color: medColor || '#FFFFFF',
         createdAt: new Date().toISOString(),
-      };
-
-      const notificationIds = await scheduleForMedicine(medDraft);
-      medDraft.notificationIds = notificationIds;
+      });
 
       if (isEdit) {
-        await updateMedicine(user, id, medDraft);
+        await updateMedicine(
+          user,
+          editingId,
+          buildDraft(editingId, entries[0].name, entries[0].color)
+        );
       } else {
-        await addMedicine(user, medDraft);
+        let i = 0;
+        for (const e of entries) {
+          const id = `${Date.now()}_${i}_${Math.random()
+            .toString(36)
+            .slice(2, 7)}`;
+          await addMedicine(user, buildDraft(id, e.name, e.color));
+          i += 1;
+        }
       }
+
+      // Wipe every scheduled notification and re-arm alarms for ALL medicines
+      // so no stale/leftover snooze can fire at the wrong time.
+      const all = await getMedicines(user);
+      const idMap = await resyncAlarms(all);
+      for (const m of all) {
+        await updateMedicine(user, m.id, {
+          notificationIds: idMap[m.id] || [],
+        });
+      }
+
       navigation.goBack();
     } catch (e) {
       Alert.alert('Save failed', String(e?.message || e));
@@ -171,9 +209,15 @@ export default function AddMedicineScreen({ route, navigation }) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await cancelManyNotifications(originalNotifIds);
           const user = await getSession();
           await deleteMedicine(user, editingId);
+          const all = await getMedicines(user);
+          const idMap = await resyncAlarms(all);
+          for (const m of all) {
+            await updateMedicine(user, m.id, {
+              notificationIds: idMap[m.id] || [],
+            });
+          }
           navigation.goBack();
         },
       },
@@ -186,13 +230,95 @@ export default function AddMedicineScreen({ route, navigation }) {
       contentContainerStyle={{ padding: 20, paddingBottom: 80 }}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={styles.label}>Medicine name</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="e.g. Paracetamol 500mg"
-        value={name}
-        onChangeText={setName}
-      />
+      {isEdit ? (
+        <>
+          <Text style={styles.label}>Medicine name</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. Paracetamol 500mg"
+            value={name}
+            onChangeText={setName}
+          />
+        </>
+      ) : (
+        <>
+          <Text style={styles.label}>Medicine names</Text>
+          <Text style={styles.nameHint}>
+            Add every medicine taken at the time(s) below. Each is saved as its
+            own item but shares this schedule.
+          </Text>
+          {names.length > 0 && (
+            <View style={styles.timesWrap}>
+              {names.map((n) => (
+                <TouchableOpacity
+                  key={n.name}
+                  style={styles.nameChip}
+                  onPress={() => removeName(n.name)}
+                >
+                  <View
+                    style={[styles.nameChipDot, { backgroundColor: n.color }]}
+                  />
+                  <Text style={styles.nameChipText}>{n.name}  ×</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+          <View style={styles.nameAddRow}>
+            <TextInput
+              style={[styles.input, { flex: 1 }]}
+              placeholder="e.g. Paracetamol 500mg"
+              value={nameInput}
+              onChangeText={setNameInput}
+              onSubmitEditing={addName}
+              returnKeyType="done"
+              blurOnSubmit={false}
+            />
+            <TouchableOpacity style={styles.nameAddBtn} onPress={addName}>
+              <Text style={styles.nameAddBtnText}>+ Add</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
+
+      <Text style={styles.label}>Tablet colour</Text>
+      {!isEdit && (
+        <Text style={styles.nameHint}>
+          Pick a colour, then add the medicine above — each medicine keeps its
+          own colour.
+        </Text>
+      )}
+      <View style={styles.colorRow}>
+        {TABLET_COLORS.map((c) => {
+          const selected = color === c.hex;
+          return (
+            <TouchableOpacity
+              key={c.hex}
+              onPress={() => setColor(c.hex)}
+              style={styles.colorItem}
+            >
+              <View
+                style={[
+                  styles.colorSwatch,
+                  { backgroundColor: c.hex },
+                  selected && styles.colorSwatchSelected,
+                ]}
+              >
+                {selected && (
+                  <Text
+                    style={[
+                      styles.colorCheck,
+                      { color: c.hex === '#FDD835' || c.hex === '#FFFFFF' ? '#333' : '#fff' },
+                    ]}
+                  >
+                    ✓
+                  </Text>
+                )}
+              </View>
+              <Text style={styles.colorName}>{c.name}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
       <Text style={styles.label}>Times</Text>
       <View style={styles.timesWrap}>
@@ -324,14 +450,25 @@ export default function AddMedicineScreen({ route, navigation }) {
         ))}
       </View>
 
+      <View style={styles.guardianRow}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={styles.guardianTitle}>Alert guardian if missed</Text>
+          <Text style={styles.guardianSub}>
+            Notify your guardian if this medicine isn't taken in time. Set up the
+            guardian from the Home screen.
+          </Text>
+        </View>
+        <Switch
+          value={alertGuardian}
+          onValueChange={setAlertGuardian}
+          trackColor={{ true: '#4CAF50' }}
+        />
+      </View>
+
       <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={busy}>
         <Text style={styles.saveBtnText}>
           {busy ? 'Saving...' : isEdit ? 'Save changes' : 'Save'}
         </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.testBtn} onPress={onTestAlarm}>
-        <Text style={styles.testBtnText}>Test alarm in 30s</Text>
       </TouchableOpacity>
 
       {isEdit && (
@@ -407,6 +544,49 @@ const styles = StyleSheet.create({
     padding: 14,
     fontSize: 16,
   },
+  nameHint: { fontSize: 12, color: '#888', marginBottom: 10, lineHeight: 17 },
+  nameAddRow: { flexDirection: 'row', alignItems: 'center' },
+  nameAddBtn: {
+    backgroundColor: '#4CAF50',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  nameAddBtnText: { color: '#fff', fontWeight: '700' },
+  nameChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e3f2fd',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  nameChipDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#90a4ae',
+    marginRight: 8,
+  },
+  nameChipText: { color: '#1565c0', fontWeight: '700' },
+  colorRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  colorItem: { alignItems: 'center', width: 64, marginBottom: 12 },
+  colorSwatch: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colorSwatchSelected: { borderWidth: 3, borderColor: '#333' },
+  colorCheck: { fontSize: 18, fontWeight: '800' },
+  colorName: { fontSize: 11, color: '#666', marginTop: 4 },
   timesWrap: { flexDirection: 'row', flexWrap: 'wrap' },
   timeChip: {
     backgroundColor: '#e8f5e9',
@@ -456,6 +636,16 @@ const styles = StyleSheet.create({
   },
   snoozeOptionText: { color: '#333', fontWeight: '600' },
   snoozeOptionTextActive: { color: '#fff' },
+  guardianRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f8e9',
+    borderRadius: 10,
+    padding: 14,
+    marginTop: 24,
+  },
+  guardianTitle: { fontSize: 15, fontWeight: '700', color: '#222' },
+  guardianSub: { fontSize: 12, color: '#777', marginTop: 4, lineHeight: 17 },
   saveBtn: {
     marginTop: 24,
     backgroundColor: '#4CAF50',

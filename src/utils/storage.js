@@ -5,6 +5,9 @@ const KEYS = {
   SESSION: '@pr_session',
   MEDICINES: (user) => `@pr_meds_${user}`,
   HISTORY: (user) => `@pr_history_${user}`,
+  GUARDIAN: (user) => `@pr_guardian_${user}`,
+  ALERTS: (user) => `@pr_alerts_${user}`,
+  PUSH_TOKEN: '@pr_push_token',
 };
 
 export async function registerUser(username, password) {
@@ -85,4 +88,55 @@ export async function isTakenToday(user, medicineId) {
   const today = new Date().toISOString().slice(0, 10);
   const entries = history[today]?.[medicineId] || [];
   return entries.some((e) => e.status === 'taken');
+}
+
+// All dose log entries for a medicine on a given day (default: today).
+export async function getDoseEntries(user, medicineId, dateKey) {
+  const history = await getHistory(user);
+  const day = dateKey || new Date().toISOString().slice(0, 10);
+  return history[day]?.[medicineId] || [];
+}
+
+// ---- Guardian profile ----
+// Shape: { name, pushToken, graceMinutes, enabled }
+export async function getGuardian(user) {
+  const raw = await AsyncStorage.getItem(KEYS.GUARDIAN(user));
+  return raw ? JSON.parse(raw) : null;
+}
+
+export async function setGuardian(user, guardian) {
+  await AsyncStorage.setItem(KEYS.GUARDIAN(user), JSON.stringify(guardian));
+}
+
+export async function clearGuardian(user) {
+  await AsyncStorage.removeItem(KEYS.GUARDIAN(user));
+}
+
+// ---- This device's own Expo push token (so it can be a guardian) ----
+export async function getOwnPushToken() {
+  return AsyncStorage.getItem(KEYS.PUSH_TOKEN);
+}
+
+export async function setOwnPushToken(token) {
+  if (token) await AsyncStorage.setItem(KEYS.PUSH_TOKEN, token);
+}
+
+// ---- Per-day dedup so a guardian is alerted at most once per dose ----
+export async function hasAlertedGuardian(user, key, dateKey) {
+  const raw = await AsyncStorage.getItem(KEYS.ALERTS(user));
+  const map = raw ? JSON.parse(raw) : {};
+  const day = dateKey || new Date().toISOString().slice(0, 10);
+  return !!map[day]?.[key];
+}
+
+export async function markAlertedGuardian(user, key, dateKey) {
+  const raw = await AsyncStorage.getItem(KEYS.ALERTS(user));
+  const map = raw ? JSON.parse(raw) : {};
+  const day = dateKey || new Date().toISOString().slice(0, 10);
+  if (!map[day]) map[day] = {};
+  map[day][key] = true;
+  // Keep only the last few days to avoid unbounded growth.
+  const days = Object.keys(map).sort();
+  while (days.length > 7) delete map[days.shift()];
+  await AsyncStorage.setItem(KEYS.ALERTS(user), JSON.stringify(map));
 }

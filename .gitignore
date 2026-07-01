@@ -11,3 +11,5 @@ web-build/
 .env*
 android/
 ios/
+.DS_Store
+**/.DS_Store

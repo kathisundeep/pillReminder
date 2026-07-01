@@ -43,15 +43,30 @@ export async function ensureNotificationSetup() {
       enableVibrate: true,
     });
 
+    // Channel for incoming guardian alerts (when this device is a guardian).
+    await Notifications.setNotificationChannelAsync('guardian-alerts', {
+      name: 'Guardian Alerts',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 500, 250, 500],
+      lightColor: '#e53935',
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      enableVibrate: true,
+    });
+
     await Notifications.setNotificationCategoryAsync('pill-alarm-actions', [
       {
-        identifier: 'TOOK',
-        buttonTitle: 'Took it',
+        identifier: 'TAKEN',
+        buttonTitle: 'Taken',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: 'RESCHEDULE',
+        buttonTitle: 'Reschedule',
         options: { opensAppToForeground: true },
       },
       {
         identifier: 'SKIP',
-        buttonTitle: 'Snooze',
+        buttonTitle: 'Skip',
         options: { opensAppToForeground: true },
       },
     ]);
@@ -144,6 +159,18 @@ export async function cancelNotification(id) {
 
 export async function cancelManyNotifications(ids) {
   for (const id of ids || []) await cancelNotification(id);
+}
+
+// Wipe every scheduled notification and re-arm alarms for the given medicines.
+// This guarantees no stale/duplicate/leftover-snooze notifications survive,
+// which is the usual cause of alarms firing at unexpected times.
+export async function resyncAlarms(medicines) {
+  await Notifications.cancelAllScheduledNotificationsAsync();
+  const idMap = {};
+  for (const med of medicines || []) {
+    idMap[med.id] = await scheduleForMedicine(med);
+  }
+  return idMap;
 }
 
 export async function scheduleForMedicine(med) {
