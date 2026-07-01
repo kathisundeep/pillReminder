@@ -9,8 +9,16 @@ import {
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { Audio, InterruptionModeAndroid } from 'expo-av';
 import { getSession, recordDose, getMedicines, getMedicine } from '../utils/storage';
-import { scheduleSnooze } from '../utils/notifications';
+import { scheduleSnooze, toneById } from '../utils/notifications';
 import { notifyGuardianTaken, sweepMissedDoses } from '../utils/guardian';
+
+const TONE_SOURCES = {
+  alarm: require('../../assets/sounds/alarm.wav'),
+  chime: require('../../assets/sounds/chime.wav'),
+  bell: require('../../assets/sounds/bell.wav'),
+  siren: require('../../assets/sounds/siren.wav'),
+  gentle: require('../../assets/sounds/gentle.wav'),
+};
 
 const ALARM_PATTERN = [0, 800, 400, 800, 400, 800];
 
@@ -34,13 +42,14 @@ export default function AlarmScreen({ route, navigation }) {
           staysActiveInBackground: true,
         });
 
-        let source = require('../../assets/sounds/alarm.wav');
+        let source = TONE_SOURCES.alarm;
         if (medicineId && medicineId !== 'TEST') {
           try {
             const user = await getSession();
             if (user) {
               const med = await getMedicine(user, medicineId);
-              if (med?.alarmToneUri) source = { uri: med.alarmToneUri };
+              const tone = toneById(med?.toneId);
+              source = TONE_SOURCES[tone.sound] || TONE_SOURCES.alarm;
             }
           } catch (e) {}
         }

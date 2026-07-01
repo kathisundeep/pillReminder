@@ -20,10 +20,19 @@ import {
 import {
   resyncAlarms,
   ensureNotificationSetup,
+  TONES,
 } from '../utils/notifications';
+import { Audio } from 'expo-av';
 import WheelTimePicker from '../components/WheelTimePicker';
 import DaysSelector from '../components/DaysSelector';
-import { pickRingtone, shortToneLabel } from '../utils/ringtone';
+
+const TONE_SOURCES = {
+  alarm: require('../../assets/sounds/alarm.wav'),
+  chime: require('../../assets/sounds/chime.wav'),
+  bell: require('../../assets/sounds/bell.wav'),
+  siren: require('../../assets/sounds/siren.wav'),
+  gentle: require('../../assets/sounds/gentle.wav'),
+};
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
 
@@ -73,7 +82,8 @@ export default function AddMedicineScreen({ route, navigation }) {
   const [pickerInitial, setPickerInitial] = useState({ hour: 8, minute: 0 });
   const [busy, setBusy] = useState(false);
   const [originalNotifIds, setOriginalNotifIds] = useState([]);
-  const [alarmToneUri, setAlarmToneUri] = useState(null);
+  const [toneId, setToneId] = useState('classic');
+  const previewRef = React.useRef(null);
   const [alertGuardian, setAlertGuardian] = useState(true);
   const [color, setColor] = useState('#FFFFFF');
 
@@ -96,7 +106,7 @@ export default function AddMedicineScreen({ route, navigation }) {
       setFrequency(med.frequency || 'daily');
       setDaysOfWeek(med.daysOfWeek || []);
       setOriginalNotifIds(med.notificationIds || []);
-      setAlarmToneUri(med.alarmToneUri || null);
+      setToneId(med.toneId || 'classic');
       setAlertGuardian(med.alertGuardian !== false);
       setColor(med.color || '#FFFFFF');
     })();
@@ -109,6 +119,40 @@ export default function AddMedicineScreen({ route, navigation }) {
   };
 
   const removeTime = (t) => setTimes(times.filter((x) => x !== t));
+
+  const previewTone = async (tone) => {
+    setToneId(tone.id);
+    try {
+      if (previewRef.current) {
+        await previewRef.current.unloadAsync();
+        previewRef.current = null;
+      }
+      const { sound } = await Audio.Sound.createAsync(TONE_SOURCES[tone.sound], {
+        shouldPlay: true,
+        volume: 1.0,
+      });
+      previewRef.current = sound;
+      // Auto-stop the preview after a couple of seconds.
+      setTimeout(async () => {
+        try {
+          if (previewRef.current === sound) {
+            await sound.stopAsync();
+            await sound.unloadAsync();
+            previewRef.current = null;
+          }
+        } catch (e) {}
+      }, 2500);
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    return () => {
+      if (previewRef.current) {
+        previewRef.current.unloadAsync().catch(() => {});
+        previewRef.current = null;
+      }
+    };
+  }, []);
 
   const addName = () => {
     const n = nameInput.trim();
@@ -161,7 +205,7 @@ export default function AddMedicineScreen({ route, navigation }) {
         snoozeMinutes,
         frequency,
         daysOfWeek: sharedDays,
-        alarmToneUri: alarmToneUri || null,
+        toneId: toneId || 'classic',
         alertGuardian,
         color: medColor || '#FFFFFF',
         createdAt: new Date().toISOString(),
@@ -404,28 +448,29 @@ export default function AddMedicineScreen({ route, navigation }) {
       )}
 
       <Text style={styles.label}>Alarm tone</Text>
-      <TouchableOpacity
-        style={styles.toneRow}
-        onPress={async () => {
-          try {
-            const uri = await pickRingtone(alarmToneUri);
-            if (uri !== null) setAlarmToneUri(uri);
-          } catch (e) {
-            Alert.alert('Picker error', String(e?.message || e));
-          }
-        }}
-      >
-        <View style={{ flex: 1 }}>
-          <Text style={styles.toneTitle}>{shortToneLabel(alarmToneUri)}</Text>
-          <Text style={styles.toneSub}>Tap to choose from phone</Text>
-        </View>
-        <Text style={styles.toneArrow}>›</Text>
-      </TouchableOpacity>
-      {alarmToneUri && (
-        <TouchableOpacity onPress={() => setAlarmToneUri(null)}>
-          <Text style={styles.clearTone}>Reset to default beep</Text>
-        </TouchableOpacity>
-      )}
+      <Text style={styles.nameHint}>Tap a tone to preview and select it.</Text>
+      {TONES.map((tone) => {
+        const selected = toneId === tone.id;
+        return (
+          <TouchableOpacity
+            key={tone.id}
+            style={[styles.toneOption, selected && styles.toneOptionOn]}
+            onPress={() => previewTone(tone)}
+          >
+            <View
+              style={[styles.toneRadio, selected && styles.toneRadioOn]}
+            >
+              {selected && <View style={styles.toneRadioDot} />}
+            </View>
+            <Text
+              style={[styles.toneLabel, selected && styles.toneLabelOn]}
+            >
+              {tone.label}
+            </Text>
+            <Text style={styles.tonePlay}>▶</Text>
+          </TouchableOpacity>
+        );
+      })}
 
       <Text style={styles.label}>Snooze duration</Text>
       <View style={styles.snoozeRow}>
@@ -531,6 +576,37 @@ const styles = StyleSheet.create({
   toneTitle: { fontSize: 15, color: '#222', fontWeight: '600' },
   toneSub: { fontSize: 12, color: '#888', marginTop: 2 },
   toneArrow: { fontSize: 24, color: '#888' },
+  toneOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  toneOptionOn: { borderColor: '#4CAF50', backgroundColor: '#f1f8e9' },
+  toneRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#bbb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  toneRadioOn: { borderColor: '#4CAF50' },
+  toneRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#4CAF50',
+  },
+  toneLabel: { flex: 1, fontSize: 15, fontWeight: '600', color: '#333' },
+  toneLabelOn: { color: '#2e7d32' },
+  tonePlay: { fontSize: 14, color: '#4CAF50' },
   clearTone: {
     color: '#4CAF50',
     marginTop: 8,

@@ -90,6 +90,23 @@ export async function isTakenToday(user, medicineId) {
   return entries.some((e) => e.status === 'taken');
 }
 
+// Toggle a medicine's "taken" state for today (used by the grouped Home UI).
+export async function setTakenToday(user, medicineId, taken) {
+  const history = await getHistory(user);
+  const today = new Date().toISOString().slice(0, 10);
+  if (!history[today]) history[today] = {};
+  const entries = history[today][medicineId] || [];
+  const hasTaken = entries.some((e) => e.status === 'taken');
+  if (taken) {
+    history[today][medicineId] = hasTaken
+      ? entries
+      : [...entries, { status: 'taken', at: new Date().toISOString() }];
+  } else {
+    history[today][medicineId] = entries.filter((e) => e.status !== 'taken');
+  }
+  await AsyncStorage.setItem(KEYS.HISTORY(user), JSON.stringify(history));
+}
+
 // All dose log entries for a medicine on a given day (default: today).
 export async function getDoseEntries(user, medicineId, dateKey) {
   const history = await getHistory(user);

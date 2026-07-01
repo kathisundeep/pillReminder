@@ -24,7 +24,7 @@
     },
     "android": {
       "package": "com.pillreminder.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#4CAF50"
@@ -46,7 +46,11 @@
           "icon": "./assets/icon.png",
           "color": "#4CAF50",
           "sounds": [
-            "./assets/sounds/alarm.wav"
+            "./assets/sounds/alarm.wav",
+            "./assets/sounds/chime.wav",
+            "./assets/sounds/bell.wav",
+            "./assets/sounds/siren.wav",
+            "./assets/sounds/gentle.wav"
           ]
         }
       ]

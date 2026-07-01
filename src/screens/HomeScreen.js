@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
-  FlatList,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   Alert,
@@ -15,42 +15,11 @@ import {
   getSession,
   logoutUser,
   getDoseEntries,
+  setTakenToday,
   recordDose,
 } from '../utils/storage';
-import { cancelManyNotifications, scheduleSnooze } from '../utils/notifications';
+import { scheduleSnooze } from '../utils/notifications';
 import { sweepMissedDoses, notifyGuardianTaken } from '../utils/guardian';
-
-// A dose is "pending action" if its alarm time already passed today and the
-// user hasn't taken/skipped it, and isn't currently waiting on a snooze.
-function isPendingAction(med, entries, now) {
-  const days =
-    med.daysOfWeek && med.daysOfWeek.length
-      ? med.daysOfWeek
-      : [0, 1, 2, 3, 4, 5, 6];
-  if (!days.includes(now.getDay())) return false;
-
-  let latestPassed = null;
-  for (const t of med.times || []) {
-    const [h, m] = t.split(':').map(Number);
-    const d = new Date(now);
-    d.setHours(h, m, 0, 0);
-    if (d <= now && (!latestPassed || d > latestPassed)) latestPassed = d;
-  }
-  if (!latestPassed) return false;
-  if (entries.some((e) => e.status === 'taken')) return false;
-  if (entries.some((e) => e.status === 'skipped')) return false;
-
-  const snoozes = entries
-    .filter((e) => e.status === 'snoozed')
-    .map((e) => new Date(e.at))
-    .sort((a, b) => a - b);
-  if (snoozes.length) {
-    const snoozeMin = Number(med.snoozeMinutes) || 10;
-    const fire = new Date(snoozes[snoozes.length - 1].getTime() + snoozeMin * 60000);
-    if (now < fire) return false; // still waiting for the snooze re-alarm
-  }
-  return true;
-}
 
 function formatTime(hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
@@ -59,20 +28,42 @@ function formatTime(hhmm) {
   return `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-function formatSchedule(med) {
-  if (med.frequency === 'weekly' && med.daysOfWeek?.length) {
-    if (med.daysOfWeek.length === 7) return 'Every day';
-    return med.daysOfWeek.map((d) => DAY_LABELS[d]).join(' ');
+// Per-medicine state for today given its dose log entries.
+function medState(med, entries, now) {
+  if (entries.some((e) => e.status === 'taken')) return 'taken';
+  if (entries.some((e) => e.status === 'skipped')) return 'skipped';
+
+  let latestPassed = null;
+  for (const t of med.times || []) {
+    const [h, m] = t.split(':').map(Number);
+    const d = new Date(now);
+    d.setHours(h, m, 0, 0);
+    if (d <= now && (!latestPassed || d > latestPassed)) latestPassed = d;
   }
-  return 'Every day';
+  const snoozes = entries
+    .filter((e) => e.status === 'snoozed')
+    .map((e) => new Date(e.at))
+    .sort((a, b) => a - b);
+  if (snoozes.length) {
+    const snoozeMin = Number(med.snoozeMinutes) || 10;
+    const fire = new Date(snoozes[snoozes.length - 1].getTime() + snoozeMin * 60000);
+    if (now < fire) return 'snoozed';
+  }
+  return latestPassed ? 'pending' : 'upcoming';
+}
+
+function isDueToday(med, now) {
+  const days =
+    med.daysOfWeek && med.daysOfWeek.length
+      ? med.daysOfWeek
+      : [0, 1, 2, 3, 4, 5, 6];
+  return days.includes(now.getDay());
 }
 
 export default function HomeScreen({ navigation }) {
   const [user, setUser] = useState(null);
-  const [meds, setMeds] = useState([]);
-  const [takenMap, setTakenMap] = useState({});
-  const [pendingMap, setPendingMap] = useState({});
+  const [slots, setSlots] = useState([]); // [{ time, items: [{med, state}] }]
+  const [otherDays, setOtherDays] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
@@ -83,40 +74,31 @@ export default function HomeScreen({ navigation }) {
     }
     setUser(u);
     const list = await getMedicines(u);
-    setMeds(list);
     const now = new Date();
-    const tm = {};
-    const pm = {};
-    for (const m of list) {
-      const entries = await getDoseEntries(u, m.id);
-      tm[m.id] = entries.some((e) => e.status === 'taken');
-      pm[m.id] = isPendingAction(m, entries, now);
+
+    const slotMap = {}; // time -> [{med, state}]
+    const off = [];
+    for (const med of list) {
+      const entries = await getDoseEntries(u, med.id);
+      if (!isDueToday(med, now)) {
+        off.push(med);
+        continue;
+      }
+      const state = medState(med, entries, now);
+      for (const t of med.times || []) {
+        if (!slotMap[t]) slotMap[t] = [];
+        slotMap[t].push({ med, state });
+      }
     }
-    setTakenMap(tm);
-    setPendingMap(pm);
-    // Catch up on any missed doses while the app was closed.
+    const sorted = Object.keys(slotMap)
+      .sort()
+      .map((t) => ({ time: t, items: slotMap[t] }));
+    setSlots(sorted);
+    setOtherDays(off);
+
+    // Catch up on any missed/skipped doses while the app was closed.
     sweepMissedDoses();
   }, [navigation]);
-
-  const onTaken = async (med) => {
-    await recordDose(user, med.id, 'taken');
-    await notifyGuardianTaken(user, med.name);
-    load();
-  };
-  const onReschedule = async (med) => {
-    await recordDose(user, med.id, 'snoozed');
-    await scheduleSnooze({
-      medicineId: med.id,
-      medicineName: med.name,
-      minutes: med.snoozeMinutes || 10,
-    });
-    load();
-  };
-  const onSkipDose = async (med) => {
-    await recordDose(user, med.id, 'skipped');
-    sweepMissedDoses();
-    load();
-  };
 
   useFocusEffect(
     useCallback(() => {
@@ -130,14 +112,56 @@ export default function HomeScreen({ navigation }) {
     setRefreshing(false);
   };
 
-  const onDelete = (med) => {
-    Alert.alert('Delete medicine', `Remove "${med.name}"?`, [
+  const toggleTaken = async (med, currentlyTaken) => {
+    await setTakenToday(user, med.id, !currentlyTaken);
+    if (!currentlyTaken) await notifyGuardianTaken(user, med.name);
+    load();
+  };
+
+  const takeAll = async (items) => {
+    for (const { med, state } of items) {
+      if (state !== 'taken') {
+        await setTakenToday(user, med.id, true);
+        await notifyGuardianTaken(user, med.name);
+      }
+    }
+    load();
+  };
+
+  const rescheduleAll = async (items) => {
+    for (const { med, state } of items) {
+      if (state === 'taken') continue;
+      await recordDose(user, med.id, 'snoozed');
+      await scheduleSnooze({
+        medicineId: med.id,
+        medicineName: med.name,
+        minutes: med.snoozeMinutes || 10,
+      });
+    }
+    load();
+  };
+
+  const skipAll = async (items) => {
+    for (const { med, state } of items) {
+      if (state === 'taken') continue;
+      await recordDose(user, med.id, 'skipped');
+    }
+    sweepMissedDoses();
+    load();
+  };
+
+  const onMedLongPress = (med) => {
+    Alert.alert(med.name, undefined, [
       { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Edit',
+        onPress: () =>
+          navigation.navigate('AddMedicine', { medicineId: med.id }),
+      },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await cancelManyNotifications(med.notificationIds);
           await deleteMedicine(user, med.id);
           load();
         },
@@ -148,6 +172,12 @@ export default function HomeScreen({ navigation }) {
   const onLogout = async () => {
     await logoutUser();
     navigation.replace('Login');
+  };
+
+  const slotStatus = (items) => {
+    if (items.every((i) => i.state === 'taken')) return 'done';
+    if (items.some((i) => i.state === 'pending')) return 'due';
+    return 'upcoming';
   };
 
   return (
@@ -170,96 +200,149 @@ export default function HomeScreen({ navigation }) {
         </View>
       </View>
 
-      <FlatList
-        data={meds}
-        keyExtractor={(item) => item.id}
+      <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        ListEmptyComponent={
+      >
+        {slots.length === 0 && otherDays.length === 0 && (
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No medicines yet.</Text>
-            <Text style={styles.emptySub}>
-              Tap "+ Add medicine" to start.
-            </Text>
+            <Text style={styles.emptySub}>Tap "+ Add medicine" to start.</Text>
           </View>
-        }
-        renderItem={({ item }) => {
-          const taken = takenMap[item.id];
-          const pending = pendingMap[item.id];
+        )}
+
+        {slots.map((slot) => {
+          const status = slotStatus(slot.items);
           return (
-            <TouchableOpacity
+            <View
+              key={slot.time}
               style={[
                 styles.card,
-                taken && styles.cardTaken,
-                pending && styles.cardPending,
+                status === 'done' && styles.cardDone,
+                status === 'due' && styles.cardDue,
               ]}
-              onPress={() =>
-                navigation.navigate('AddMedicine', { medicineId: item.id })
-              }
-              onLongPress={() => onDelete(item)}
             >
-              <View style={styles.cardTop}>
-                <View
-                  style={[
-                    styles.colorDot,
-                    { backgroundColor: item.color || '#FFFFFF' },
-                  ]}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.medName}>{item.name}</Text>
-                  <Text style={styles.medMeta}>
-                    {item.times.map(formatTime).join('  •  ')}
-                  </Text>
-                  <Text style={styles.medSub}>
-                    {formatSchedule(item)} · Snooze {item.snoozeMinutes} min
-                  </Text>
-                </View>
+              <View style={styles.slotHead}>
+                <Text style={styles.slotTime}>{formatTime(slot.time)}</Text>
                 <View
                   style={[
                     styles.badge,
-                    taken
+                    status === 'done'
                       ? styles.badgeOk
-                      : pending
+                      : status === 'due'
                       ? styles.badgeDue
                       : styles.badgePending,
                   ]}
                 >
                   <Text style={styles.badgeText}>
-                    {taken ? 'Taken' : pending ? 'Due now' : 'Pending'}
+                    {status === 'done'
+                      ? 'Taken'
+                      : status === 'due'
+                      ? 'Due now'
+                      : 'Upcoming'}
                   </Text>
                 </View>
               </View>
 
-              {pending && (
+              {slot.items.map(({ med, state }) => {
+                const taken = state === 'taken';
+                return (
+                  <TouchableOpacity
+                    key={med.id}
+                    style={styles.medRow}
+                    onPress={() => toggleTaken(med, taken)}
+                    onLongPress={() => onMedLongPress(med)}
+                  >
+                    <View
+                      style={[
+                        styles.check,
+                        taken && styles.checkOn,
+                      ]}
+                    >
+                      {taken && <Text style={styles.checkMark}>✓</Text>}
+                    </View>
+                    <View
+                      style={[
+                        styles.colorDot,
+                        { backgroundColor: med.color || '#FFFFFF' },
+                      ]}
+                    />
+                    <Text
+                      style={[styles.medName, taken && styles.medNameTaken]}
+                    >
+                      {med.name}
+                    </Text>
+                    {state === 'skipped' && (
+                      <Text style={styles.tagSkip}>Skipped</Text>
+                    )}
+                    {state === 'snoozed' && (
+                      <Text style={styles.tagSnooze}>Snoozed</Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+
+              {status === 'due' && (
                 <View style={styles.actionRow}>
                   <TouchableOpacity
                     style={[styles.actionBtn, styles.actionTaken]}
-                    onPress={() => onTaken(item)}
+                    onPress={() => takeAll(slot.items)}
                   >
                     <Text style={styles.actionTakenText}>✓ Taken</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.actionBtn, styles.actionSnooze]}
-                    onPress={() => onReschedule(item)}
+                    onPress={() => rescheduleAll(slot.items)}
                   >
-                    <Text style={styles.actionSnoozeText}>
-                      Reschedule {item.snoozeMinutes || 10}m
-                    </Text>
+                    <Text style={styles.actionSnoozeText}>Reschedule</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.actionBtn, styles.actionSkip]}
-                    onPress={() => onSkipDose(item)}
+                    onPress={() => skipAll(slot.items)}
                   >
                     <Text style={styles.actionSkipText}>✗ Skip</Text>
                   </TouchableOpacity>
                 </View>
               )}
-            </TouchableOpacity>
+
+              <Text style={styles.slotHint}>
+                Tap a medicine to mark it individually · long-press to edit
+              </Text>
+            </View>
           );
-        }}
-      />
+        })}
+
+        {otherDays.length > 0 && (
+          <>
+            <Text style={styles.sectionLabel}>Other days</Text>
+            {otherDays.map((med) => (
+              <TouchableOpacity
+                key={med.id}
+                style={styles.otherRow}
+                onPress={() =>
+                  navigation.navigate('AddMedicine', { medicineId: med.id })
+                }
+                onLongPress={() => onMedLongPress(med)}
+              >
+                <View
+                  style={[
+                    styles.colorDot,
+                    { backgroundColor: med.color || '#FFFFFF' },
+                  ]}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.medName}>{med.name}</Text>
+                  <Text style={styles.medSub}>
+                    {med.times.map(formatTime).join('  •  ')}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </>
+        )}
+      </ScrollView>
 
       <TouchableOpacity
         style={styles.fab}
@@ -297,34 +380,72 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     padding: 16,
     borderRadius: 12,
-    marginBottom: 10,
+    marginBottom: 12,
     shadowColor: '#000',
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 1,
   },
-  cardTop: { flexDirection: 'row', alignItems: 'center' },
-  cardTaken: { backgroundColor: '#e8f5e9' },
-  cardPending: { borderWidth: 1.5, borderColor: '#ff9800' },
-  colorDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: '#bbb',
-    marginRight: 12,
+  cardDone: { backgroundColor: '#e8f5e9' },
+  cardDue: { borderWidth: 1.5, borderColor: '#fb8c00' },
+  slotHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  medName: { fontSize: 18, fontWeight: '700', color: '#222' },
-  medMeta: { fontSize: 14, color: '#555', marginTop: 4 },
-  medSub: { fontSize: 12, color: '#888', marginTop: 4 },
+  slotTime: { fontSize: 20, fontWeight: '800', color: '#222' },
   badge: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999 },
   badgeOk: { backgroundColor: '#4CAF50' },
   badgePending: { backgroundColor: '#ffb74d' },
   badgeDue: { backgroundColor: '#fb8c00' },
   badgeText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  medRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  check: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    borderColor: '#bbb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  checkOn: { backgroundColor: '#4CAF50', borderColor: '#4CAF50' },
+  checkMark: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  colorDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bbb',
+    marginRight: 10,
+  },
+  medName: { fontSize: 16, fontWeight: '600', color: '#222', flexShrink: 1 },
+  medNameTaken: {
+    color: '#8aa08c',
+    textDecorationLine: 'line-through',
+  },
+  medSub: { fontSize: 12, color: '#888', marginTop: 3 },
+  tagSkip: {
+    marginLeft: 'auto',
+    color: '#e53935',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  tagSnooze: {
+    marginLeft: 'auto',
+    color: '#8e24aa',
+    fontWeight: '700',
+    fontSize: 12,
+  },
   actionRow: {
     flexDirection: 'row',
-    marginTop: 14,
+    marginTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#eee',
     paddingTop: 12,
@@ -338,10 +459,37 @@ const styles = StyleSheet.create({
   },
   actionTaken: { backgroundColor: '#4CAF50' },
   actionTakenText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  actionSnooze: { backgroundColor: '#eceff1', borderWidth: 1, borderColor: '#cfd8dc' },
+  actionSnooze: {
+    backgroundColor: '#eceff1',
+    borderWidth: 1,
+    borderColor: '#cfd8dc',
+  },
   actionSnoozeText: { color: '#455a64', fontWeight: '700', fontSize: 13 },
-  actionSkip: { backgroundColor: '#fdecea', borderWidth: 1, borderColor: '#f5c6c0' },
+  actionSkip: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1,
+    borderColor: '#f5c6c0',
+  },
   actionSkipText: { color: '#e53935', fontWeight: '700', fontSize: 13 },
+  slotHint: { fontSize: 11, color: '#aaa', marginTop: 10 },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  otherRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 8,
+    opacity: 0.85,
+  },
   empty: { alignItems: 'center', marginTop: 80 },
   emptyText: { fontSize: 18, color: '#555' },
   emptySub: { color: '#888', marginTop: 6 },

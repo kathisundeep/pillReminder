@@ -5,6 +5,20 @@ import { Platform } from 'react-native';
 const CHANNEL_ID = 'pill-alarm-v2';
 const ALARM_SOUND = 'alarm';
 
+// Selectable, bundled alarm tones. `sound` is the res/raw file name (no ext);
+// each tone gets its own Android channel because a channel's sound is fixed.
+export const TONES = [
+  { id: 'classic', label: 'Classic', sound: 'alarm', channelId: 'pill-alarm-classic' },
+  { id: 'chime', label: 'Chime', sound: 'chime', channelId: 'pill-alarm-chime' },
+  { id: 'bell', label: 'Bell', sound: 'bell', channelId: 'pill-alarm-bell' },
+  { id: 'siren', label: 'Siren', sound: 'siren', channelId: 'pill-alarm-siren' },
+  { id: 'gentle', label: 'Gentle', sound: 'gentle', channelId: 'pill-alarm-gentle' },
+];
+
+export function toneById(id) {
+  return TONES.find((t) => t.id === id) || TONES[0];
+}
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -32,16 +46,19 @@ export async function ensureNotificationSetup() {
     try {
       await Notifications.deleteNotificationChannelAsync('pill-alarm');
     } catch (e) {}
-    await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
-      name: 'Pill Alarms',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 800, 400, 800, 400, 800],
-      lightColor: '#4CAF50',
-      sound: ALARM_SOUND,
-      bypassDnd: true,
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      enableVibrate: true,
-    });
+    // One channel per selectable tone (a channel's sound can't change later).
+    for (const tone of TONES) {
+      await Notifications.setNotificationChannelAsync(tone.channelId, {
+        name: `Pill Alarms – ${tone.label}`,
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 800, 400, 800, 400, 800],
+        lightColor: '#4CAF50',
+        sound: tone.sound,
+        bypassDnd: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        enableVibrate: true,
+      });
+    }
 
     // Channel for incoming guardian alerts (when this device is a guardian).
     await Notifications.setNotificationChannelAsync('guardian-alerts', {
@@ -80,12 +97,17 @@ export async function getPermissionStatus() {
   return p.status;
 }
 
-function alarmContent(medicineId, medicineName, titlePrefix = 'Time for your medicine') {
+function alarmContent(
+  medicineId,
+  medicineName,
+  titlePrefix = 'Time for your medicine',
+  sound = ALARM_SOUND
+) {
   return {
     title: titlePrefix,
     body: `Take ${medicineName} now`,
     data: { medicineId, medicineName, type: 'pill-alarm' },
-    sound: ALARM_SOUND,
+    sound,
     priority: Notifications.AndroidNotificationPriority.MAX,
     categoryIdentifier: 'pill-alarm-actions',
     vibrate: [0, 800, 400, 800, 400, 800],
@@ -94,52 +116,43 @@ function alarmContent(medicineId, medicineName, titlePrefix = 'Time for your med
   };
 }
 
-export async function scheduleDailyAlarm({ medicineId, medicineName, hour, minute }) {
+export async function scheduleDailyAlarm({ medicineId, medicineName, hour, minute, toneId }) {
+  const tone = toneById(toneId);
   const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName),
+    content: alarmContent(medicineId, medicineName, undefined, tone.sound),
     trigger: {
       hour,
       minute,
       repeats: true,
-      channelId: CHANNEL_ID,
+      channelId: tone.channelId,
     },
   });
   return id;
 }
 
-export async function scheduleWeeklyAlarm({ medicineId, medicineName, weekday, hour, minute }) {
+export async function scheduleWeeklyAlarm({ medicineId, medicineName, weekday, hour, minute, toneId }) {
+  const tone = toneById(toneId);
   const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName),
+    content: alarmContent(medicineId, medicineName, undefined, tone.sound),
     trigger: {
       weekday,
       hour,
       minute,
       repeats: true,
-      channelId: CHANNEL_ID,
+      channelId: tone.channelId,
     },
   });
   return id;
 }
 
-export async function scheduleSnooze({ medicineId, medicineName, minutes }) {
+export async function scheduleSnooze({ medicineId, medicineName, minutes, toneId }) {
+  const tone = toneById(toneId);
   const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName, 'Snoozed reminder'),
+    content: alarmContent(medicineId, medicineName, 'Snoozed reminder', tone.sound),
     trigger: {
       seconds: Math.max(60, minutes * 60),
       repeats: false,
-      channelId: CHANNEL_ID,
-    },
-  });
-  return id;
-}
-
-export async function scheduleTestAlarm({ seconds = 30 } = {}) {
-  const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent('TEST', 'Test Medicine', 'Test alarm'),
-    trigger: {
-      seconds,
-      repeats: false,
-      channelId: CHANNEL_ID,
+      channelId: tone.channelId,
     },
   });
   return id;
@@ -185,6 +198,7 @@ export async function scheduleForMedicine(med) {
           weekday: dow + 1,
           hour: h,
           minute: m,
+          toneId: med.toneId,
         });
         ids.push(id);
       }
@@ -194,6 +208,7 @@ export async function scheduleForMedicine(med) {
         medicineName: med.name,
         hour: h,
         minute: m,
+        toneId: med.toneId,
       });
       ids.push(id);
     }
