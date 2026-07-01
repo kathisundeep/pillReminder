@@ -273,6 +273,9 @@ export default function HomeScreen({ navigation }) {
                       style={[styles.medName, taken && styles.medNameTaken]}
                     >
                       {med.name}
+                      {med.form ? (
+                        <Text style={styles.medForm}>  · {med.form}</Text>
+                      ) : null}
                     </Text>
                     {state === 'skipped' && (
                       <Text style={styles.tagSkip}>Skipped</Text>
@@ -426,6 +429,7 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   medName: { fontSize: 16, fontWeight: '600', color: '#222', flexShrink: 1 },
+  medForm: { fontSize: 13, fontWeight: '500', color: '#999' },
   medNameTaken: {
     color: '#8aa08c',
     textDecorationLine: 'line-through',

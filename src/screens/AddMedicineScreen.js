@@ -36,6 +36,14 @@ const TONE_SOURCES = {
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
 
+const FORM_OPTIONS = [
+  { id: 'Tablet', label: 'Tablet' },
+  { id: 'Capsule', label: 'Capsule' },
+  { id: 'Syrup', label: 'Syrup' },
+  { id: 'Injection', label: 'Injection' },
+  { id: 'Drops', label: 'Drops' },
+];
+
 const TABLET_COLORS = [
   { name: 'White', hex: '#FFFFFF' },
   { name: 'Red', hex: '#E53935' },
@@ -82,6 +90,7 @@ export default function AddMedicineScreen({ route, navigation }) {
   const [pickerInitial, setPickerInitial] = useState({ hour: 8, minute: 0 });
   const [busy, setBusy] = useState(false);
   const [originalNotifIds, setOriginalNotifIds] = useState([]);
+  const [form, setForm] = useState('Tablet');
   const [toneId, setToneId] = useState('classic');
   const previewRef = React.useRef(null);
   const [alertGuardian, setAlertGuardian] = useState(true);
@@ -107,6 +116,7 @@ export default function AddMedicineScreen({ route, navigation }) {
       setDaysOfWeek(med.daysOfWeek || []);
       setOriginalNotifIds(med.notificationIds || []);
       setToneId(med.toneId || 'classic');
+      setForm(med.form || 'Tablet');
       setAlertGuardian(med.alertGuardian !== false);
       setColor(med.color || '#FFFFFF');
     })();
@@ -201,6 +211,7 @@ export default function AddMedicineScreen({ route, navigation }) {
       const buildDraft = (id, medName, medColor) => ({
         id,
         name: medName,
+        form: form || 'Tablet',
         times,
         snoozeMinutes,
         frequency,
@@ -324,7 +335,25 @@ export default function AddMedicineScreen({ route, navigation }) {
         </>
       )}
 
-      <Text style={styles.label}>Tablet colour</Text>
+      <Text style={styles.label}>Type</Text>
+      <View style={styles.timesWrap}>
+        {FORM_OPTIONS.map((f) => {
+          const on = form === f.id;
+          return (
+            <TouchableOpacity
+              key={f.id}
+              style={[styles.quickChip, on && styles.quickChipOn]}
+              onPress={() => setForm(f.id)}
+            >
+              <Text style={[styles.quickChipText, on && styles.quickChipTextOn]}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <Text style={styles.label}>Colour</Text>
       {!isEdit && (
         <Text style={styles.nameHint}>
           Pick a colour, then add the medicine above — each medicine keeps its
