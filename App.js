@@ -10,6 +10,8 @@ import HomeScreen from './src/screens/HomeScreen';
 import AddMedicineScreen from './src/screens/AddMedicineScreen';
 import AlarmScreen from './src/screens/AlarmScreen';
 import GuardianScreen from './src/screens/GuardianScreen';
+import GuardianDashboardScreen from './src/screens/GuardianDashboardScreen';
+import GuardianUserScreen from './src/screens/GuardianUserScreen';
 import { getSession, recordDose, getMedicines } from './src/utils/storage';
 import {
   ensureNotificationSetup,
@@ -138,7 +140,17 @@ export default function App() {
         <Stack.Screen
           name="Guardian"
           component={GuardianScreen}
-          options={{ title: 'Guardian alerts' }}
+          options={{ title: 'Guardian' }}
+        />
+        <Stack.Screen
+          name="GuardianDashboard"
+          component={GuardianDashboardScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="GuardianUser"
+          component={GuardianUserScreen}
+          options={{ title: 'Medicines' }}
         />
         <Stack.Screen
           name="Alarm"

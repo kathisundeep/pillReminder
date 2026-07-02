@@ -17,6 +17,7 @@ export default function LoginScreen({ navigation }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [asGuardian, setAsGuardian] = useState(false);
 
   const submit = async () => {
     if (!username.trim() || !password.trim()) {
@@ -38,8 +39,12 @@ export default function LoginScreen({ navigation }) {
         return;
       }
     }
-    // First cloud login: import any medicines left in old on-device storage,
-    // then (re)schedule local alarms from the cloud list.
+    if (asGuardian) {
+      navigation.replace('GuardianDashboard');
+      return;
+    }
+    // First cloud login (patient): import any medicines left in old on-device
+    // storage, then (re)schedule local alarms from the cloud list.
     try {
       const imported = await importLocalMedicinesOnce();
       await resyncAlarmsFromCloud();
@@ -60,8 +65,33 @@ export default function LoginScreen({ navigation }) {
     >
       <Text style={styles.logo}>Pill Reminder</Text>
       <Text style={styles.subtitle}>
-        {mode === 'login' ? 'Welcome back' : 'Create your account'}
+        {asGuardian
+          ? mode === 'login'
+            ? 'Guardian log in'
+            : 'Create a guardian account'
+          : mode === 'login'
+          ? 'Welcome back'
+          : 'Create your account'}
       </Text>
+
+      <View style={styles.roleRow}>
+        <TouchableOpacity
+          style={[styles.roleBtn, !asGuardian && styles.roleBtnOn]}
+          onPress={() => setAsGuardian(false)}
+        >
+          <Text style={[styles.roleText, !asGuardian && styles.roleTextOn]}>
+            I take medicines
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.roleBtn, asGuardian && styles.roleBtnOn]}
+          onPress={() => setAsGuardian(true)}
+        >
+          <Text style={[styles.roleText, asGuardian && styles.roleTextOn]}>
+            I'm a guardian
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       <TextInput
         style={styles.input}
@@ -132,6 +162,17 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   buttonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  roleRow: {
+    flexDirection: 'row',
+    backgroundColor: '#eee',
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 20,
+  },
+  roleBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+  roleBtnOn: { backgroundColor: '#fff', elevation: 1 },
+  roleText: { color: '#666', fontWeight: '600', fontSize: 13 },
+  roleTextOn: { color: '#222' },
   switchText: {
     color: '#4CAF50',
     textAlign: 'center',

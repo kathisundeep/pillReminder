@@ -6,7 +6,6 @@ import Constants from 'expo-constants';
 
 import {
   getSession,
-  getGuardian,
   getMedicines,
   getDoseEntries,
   isTakenToday,
@@ -15,6 +14,11 @@ import {
   markAlertedGuardian,
   setOwnPushToken,
 } from './storage';
+import {
+  getActiveGuardianTarget,
+  getMyProfile,
+  saveMyPushToken,
+} from './guardianCloud';
 
 export const SWEEP_TASK = 'guardian-missed-dose-sweep';
 const EXPO_PUSH_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
@@ -59,7 +63,13 @@ export async function registerForPushTokenAsync() {
       projectId ? { projectId } : undefined
     );
     const token = resp?.data || null;
-    if (token) await setOwnPushToken(token);
+    if (token) {
+      await setOwnPushToken(token);
+      // Also store on the cloud profile so a paired guardian can be reached.
+      try {
+        await saveMyPushToken(token);
+      } catch (e) {}
+    }
     return token;
   } catch (e) {
     return null;
@@ -99,10 +109,11 @@ export async function sendGuardianPush(pushToken, { title, body, data } = {}) {
 export async function notifyGuardianTaken(user, medicineName) {
   try {
     if (!user) return;
-    const guardian = await getGuardian(user);
-    if (!guardian || !guardian.enabled || !guardian.pushToken) return;
-    if (guardian.notifyMode !== 'both') return;
-    await sendGuardianPush(guardian.pushToken, {
+    const profile = await getMyProfile();
+    if ((profile?.settings?.notifyMode || 'missed') !== 'both') return;
+    const target = await getActiveGuardianTarget();
+    if (!target?.token) return;
+    await sendGuardianPush(target.token, {
       title: 'Medicine taken',
       body: `${user} just took ${medicineName || 'their medicine'}.`,
       data: { type: 'guardian-taken', medicineName, who: user },
@@ -121,10 +132,11 @@ export async function sweepMissedDoses() {
     const user = await getSession();
     if (!user) return;
 
-    const guardian = await getGuardian(user);
-    if (!guardian || !guardian.enabled || !guardian.pushToken) return;
-
-    const grace = Number(guardian.graceMinutes) || 30;
+    // Cloud guardian target (the paired guardian's device) + user settings.
+    const target = await getActiveGuardianTarget();
+    if (!target?.token) return;
+    const profile = await getMyProfile();
+    const grace = Number(profile?.settings?.graceMinutes) || 30;
     const meds = await getMedicines(user);
     const now = new Date();
     const todayDow = now.getDay(); // 0 (Sun) .. 6 (Sat)
@@ -180,7 +192,7 @@ export async function sweepMissedDoses() {
       const key = med.id;
       if (await hasAlertedGuardian(user, key)) continue;
 
-      await sendGuardianPush(guardian.pushToken, {
+      await sendGuardianPush(target.token, {
         title: skipped ? 'Skipped medicine alert' : 'Missed medicine alert',
         body: skipped
           ? `${user} skipped ${med.name} (due ${formatTime(

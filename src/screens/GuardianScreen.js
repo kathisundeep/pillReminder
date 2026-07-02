@@ -1,8 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -11,291 +10,198 @@ import {
   Share,
   ActivityIndicator,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import {
-  getSession,
-  getGuardian,
-  setGuardian,
-  clearGuardian,
-  getOwnPushToken,
-} from '../utils/storage';
-import {
-  registerForPushTokenAsync,
-  sendGuardianPush,
-} from '../utils/guardian';
+  getMyProfile,
+  updateMySettings,
+  generatePairingCode,
+  getMyActiveGuardian,
+  revokeGuardian,
+} from '../utils/guardianCloud';
 
 const GRACE_OPTIONS = [5, 15, 30, 60];
 
-export default function GuardianScreen({ navigation }) {
-  const [user, setUser] = useState(null);
-  const [enabled, setEnabled] = useState(false);
-  const [name, setName] = useState('');
-  const [pushToken, setPushToken] = useState('');
-  const [graceMinutes, setGraceMinutes] = useState(30);
-  const [notifyMode, setNotifyMode] = useState('missed');
+export default function GuardianScreen() {
+  const [profile, setProfile] = useState(null);
+  const [guardian, setGuardian] = useState(null);
+  const [code, setCode] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const [myCode, setMyCode] = useState(null);
-  const [loadingCode, setLoadingCode] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      const u = await getSession();
-      setUser(u);
-      if (u) {
-        const g = await getGuardian(u);
-        if (g) {
-          setEnabled(!!g.enabled);
-          setName(g.name || '');
-          setPushToken(g.pushToken || '');
-          setGraceMinutes(g.graceMinutes || 30);
-          setNotifyMode(g.notifyMode || 'missed');
-        }
-      }
-      // Resolve this device's own pairing code (so it can be a guardian).
-      let token = await getOwnPushToken();
-      if (!token) token = await registerForPushTokenAsync();
-      setMyCode(token);
-      setLoadingCode(false);
-    })();
+  const load = useCallback(async () => {
+    setLoading(true);
+    const p = await getMyProfile();
+    setProfile(p);
+    setGuardian(await getMyActiveGuardian());
+    setLoading(false);
   }, []);
 
-  const onSave = async () => {
-    if (enabled) {
-      if (!name.trim()) return Alert.alert('Missing', "Enter the guardian's name.");
-      if (!pushToken.trim() || !pushToken.includes('ExponentPushToken'))
-        return Alert.alert(
-          'Invalid code',
-          "Paste the guardian's pairing code. It looks like ExponentPushToken[xxxxxxxx]."
-        );
-    }
+  useFocusEffect(
+    useCallback(() => {
+      load();
+      setCode(null); // never keep a stale code on screen
+    }, [load])
+  );
+
+  const settings = profile?.settings || {};
+  const grace = settings.graceMinutes || 30;
+  const notifyMode = settings.notifyMode || 'missed';
+  const approvalRequired = settings.approvalRequired !== false;
+
+  const patchSettings = async (patch) => {
+    const next = await updateMySettings(patch);
+    setProfile((p) => ({ ...p, settings: next }));
+  };
+
+  const onGenerate = async () => {
     setBusy(true);
     try {
-      await setGuardian(user, {
-        enabled,
-        name: name.trim(),
-        pushToken: pushToken.trim(),
-        graceMinutes,
-        notifyMode,
-      });
-      Alert.alert(
-        'Saved',
-        enabled
-          ? `${name.trim()} will be alerted if you miss a dose by more than ${graceMinutes} minutes.`
-          : 'Guardian alerts are turned off.'
-      );
-      navigation.goBack();
+      const c = await generatePairingCode();
+      setCode(c);
     } catch (e) {
-      Alert.alert('Save failed', String(e?.message || e));
+      Alert.alert('Could not create code', String(e?.message || e));
     } finally {
       setBusy(false);
     }
   };
 
-  const onTest = async () => {
-    if (!pushToken.trim() || !pushToken.includes('ExponentPushToken'))
-      return Alert.alert('Invalid code', "Paste the guardian's pairing code first.");
-    setBusy(true);
-    const ok = await sendGuardianPush(pushToken.trim(), {
-      title: 'Test alert from PillReminder',
-      body: `${user || 'Your dependent'} set you as their guardian. Alerts will arrive here.`,
-    });
-    setBusy(false);
-    Alert.alert(
-      ok ? 'Test sent' : 'Could not send',
-      ok
-        ? "If the code is correct, the guardian's phone should buzz now."
-        : 'Check the pairing code and that both phones have internet.'
-    );
+  const shareInvite = async () => {
+    if (!code || !profile) return;
+    try {
+      await Share.share({
+        message:
+          `Be my guardian on PillReminder.\n\n` +
+          `1. Install the app and tap "Guardian login".\n` +
+          `2. Enter my username: ${profile.username}\n` +
+          `3. Enter this code: ${code}\n\n(Code expires in 30 days.)`,
+      });
+    } catch (e) {}
   };
 
   const onRemove = () => {
-    Alert.alert('Remove guardian', 'Stop alerting your guardian?', [
+    Alert.alert('Remove guardian', 'Stop sharing with your guardian?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
         style: 'destructive',
         onPress: async () => {
-          await clearGuardian(user);
-          setEnabled(false);
-          setName('');
-          setPushToken('');
-          navigation.goBack();
+          await revokeGuardian();
+          load();
         },
       },
     ]);
   };
 
-  const shareMyCode = async () => {
-    if (!myCode) return;
-    try {
-      await Share.share({
-        message: `Add me as your guardian in PillReminder. Paste this pairing code:\n\n${myCode}`,
-      });
-    } catch (e) {}
-  };
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color="#4CAF50" />
+      </View>
+    );
+  }
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
-      keyboardShouldPersistTaps="handled"
     >
       <Text style={styles.intro}>
-        A guardian gets a notification on their phone if you don't take a
-        medicine in time — so they can call you or bring it over.
+        A guardian signs in on their own phone and can see your medicines and get
+        alerted if you miss a dose.
       </Text>
 
-      {/* ---- Set up MY guardian ---- */}
+      {/* Current guardian */}
       <View style={styles.card}>
-        <View style={styles.rowBetween}>
-          <Text style={styles.sectionTitle}>Alert my guardian</Text>
-          <Switch
-            value={enabled}
-            onValueChange={setEnabled}
-            trackColor={{ true: '#4CAF50' }}
-          />
-        </View>
+        <Text style={styles.sectionTitle}>Your guardian</Text>
+        {guardian ? (
+          <>
+            <Text style={styles.guardianName}>
+              {guardian.guardianName || guardian.guardianUsername}
+            </Text>
+            <Text style={styles.sub}>@{guardian.guardianUsername} · linked</Text>
+            <TouchableOpacity onPress={onRemove}>
+              <Text style={styles.removeText}>Remove guardian</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <Text style={styles.sub}>No guardian linked yet.</Text>
+        )}
+      </View>
 
-        <Text style={styles.label}>Guardian's name</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Priya (daughter)"
-          value={name}
-          onChangeText={setName}
-          editable={enabled}
-        />
-
-        <Text style={styles.label}>Guardian's pairing code</Text>
-        <TextInput
-          style={[styles.input, styles.codeInput]}
-          placeholder="ExponentPushToken[...]"
-          value={pushToken}
-          onChangeText={setPushToken}
-          editable={enabled}
-          autoCapitalize="none"
-          autoCorrect={false}
-          multiline
-        />
-        <Text style={styles.hint}>
-          Ask your guardian to open this screen on their phone and tap “Share my
-          code”, then paste it here.
+      {/* Invite / change */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>
+          {guardian ? 'Change guardian' : 'Invite a guardian'}
+        </Text>
+        <Text style={styles.sub}>
+          Your username is <Text style={styles.bold}>{profile?.username}</Text>.
+          Generate a one-time code and share it. When your new guardian uses it,
+          any previous guardian is removed.
         </Text>
 
-        <Text style={styles.label}>Notify guardian this long after a missed/skipped dose</Text>
+        {code ? (
+          <View style={styles.codeBox}>
+            <Text style={styles.codeText}>{code}</Text>
+            <Text style={styles.codeHint}>Share with your guardian (expires in 30 days)</Text>
+          </View>
+        ) : null}
+
+        <TouchableOpacity
+          style={[styles.primaryBtn, busy && styles.btnDisabled]}
+          onPress={onGenerate}
+          disabled={busy}
+        >
+          <Text style={styles.primaryBtnText}>
+            {busy ? 'Working…' : code ? 'Generate a new code' : 'Generate pairing code'}
+          </Text>
+        </TouchableOpacity>
+        {code ? (
+          <TouchableOpacity style={styles.ghostBtn} onPress={shareInvite}>
+            <Text style={styles.ghostBtnText}>Share invite</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {/* Alert settings */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Alerts</Text>
+        <Text style={styles.label}>Alert my guardian if I'm late by</Text>
         <View style={styles.row}>
           {GRACE_OPTIONS.map((m) => (
             <TouchableOpacity
               key={m}
-              disabled={!enabled}
-              style={[
-                styles.chip,
-                graceMinutes === m && styles.chipOn,
-                !enabled && styles.chipDisabled,
-              ]}
-              onPress={() => setGraceMinutes(m)}
+              style={[styles.chip, grace === m && styles.chipOn]}
+              onPress={() => patchSettings({ graceMinutes: m })}
             >
-              <Text
-                style={[styles.chipText, graceMinutes === m && styles.chipTextOn]}
-              >
+              <Text style={[styles.chipText, grace === m && styles.chipTextOn]}>
                 {m} min
               </Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        <Text style={styles.label}>When to notify the guardian</Text>
-        <View style={styles.modeCol}>
-          <TouchableOpacity
-            disabled={!enabled}
-            style={[
-              styles.modeOption,
-              notifyMode === 'missed' && styles.modeOptionOn,
-              !enabled && styles.chipDisabled,
-            ]}
-            onPress={() => setNotifyMode('missed')}
-          >
-            <Text
-              style={[
-                styles.modeTitle,
-                notifyMode === 'missed' && styles.modeTitleOn,
-              ]}
-            >
-              Only missed / skipped
-            </Text>
-            <Text style={styles.modeSub}>
-              Alert the guardian only when a dose is missed or skipped.
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            disabled={!enabled}
-            style={[
-              styles.modeOption,
-              notifyMode === 'both' && styles.modeOptionOn,
-              !enabled && styles.chipDisabled,
-            ]}
-            onPress={() => setNotifyMode('both')}
-          >
-            <Text
-              style={[
-                styles.modeTitle,
-                notifyMode === 'both' && styles.modeTitleOn,
-              ]}
-            >
-              Taken and missed
-            </Text>
-            <Text style={styles.modeSub}>
-              Also send a confirmation to the guardian each time a dose is taken.
-            </Text>
-          </TouchableOpacity>
+        <View style={styles.rowBetween}>
+          <Text style={styles.label}>Also notify when I take a dose</Text>
+          <Switch
+            value={notifyMode === 'both'}
+            onValueChange={(v) => patchSettings({ notifyMode: v ? 'both' : 'missed' })}
+            trackColor={{ true: '#4CAF50' }}
+          />
         </View>
 
-        <TouchableOpacity
-          style={[styles.primaryBtn, busy && styles.btnDisabled]}
-          onPress={onSave}
-          disabled={busy}
-        >
-          <Text style={styles.primaryBtnText}>
-            {busy ? 'Saving...' : 'Save'}
-          </Text>
-        </TouchableOpacity>
-
-        {enabled && (
-          <TouchableOpacity style={styles.ghostBtn} onPress={onTest} disabled={busy}>
-            <Text style={styles.ghostBtnText}>Send test alert to guardian</Text>
-          </TouchableOpacity>
-        )}
-
-        <TouchableOpacity onPress={onRemove}>
-          <Text style={styles.removeText}>Remove guardian</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* ---- I am a guardian for someone ---- */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>I'm a guardian</Text>
-        <Text style={styles.hint}>
-          Share this device's pairing code with the person you look after. They
-          paste it into the section above on their phone.
-        </Text>
-        {loadingCode ? (
-          <ActivityIndicator style={{ marginTop: 14 }} color="#4CAF50" />
-        ) : myCode ? (
-          <>
-            <View style={styles.codeBox}>
-              <Text selectable style={styles.codeBoxText}>
-                {myCode}
-              </Text>
-            </View>
-            <TouchableOpacity style={styles.primaryBtn} onPress={shareMyCode}>
-              <Text style={styles.primaryBtnText}>Share my code</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          <Text style={styles.warn}>
-            Couldn't get a pairing code. Enable notifications and open this on a
-            real device (not an emulator).
-          </Text>
-        )}
+        <View style={styles.rowBetween}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={styles.label}>Require my approval for guardian changes</Text>
+            <Text style={styles.sub}>
+              When on, a guardian's "add medicine" waits for you to approve.
+            </Text>
+          </View>
+          <Switch
+            value={approvalRequired}
+            onValueChange={(v) => patchSettings({ approvalRequired: v })}
+            trackColor={{ true: '#4CAF50' }}
+          />
+        </View>
       </View>
     </ScrollView>
   );
@@ -303,6 +209,7 @@ export default function GuardianScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f6f8f6' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   intro: { fontSize: 14, color: '#555', lineHeight: 20, marginBottom: 16 },
   card: {
     backgroundColor: '#fff',
@@ -314,29 +221,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
   },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#222' },
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 8 },
+  guardianName: { fontSize: 17, fontWeight: '700', color: '#2e7d32', marginTop: 4 },
+  sub: { fontSize: 13, color: '#777', marginTop: 4, lineHeight: 18 },
+  bold: { fontWeight: '800', color: '#333' },
+  label: { fontSize: 14, fontWeight: '600', color: '#333', marginTop: 14, marginBottom: 8 },
+  row: { flexDirection: 'row', flexWrap: 'wrap' },
   rowBetween: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
   },
-  row: { flexDirection: 'row', flexWrap: 'wrap' },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 15,
-  },
-  codeInput: { minHeight: 64, textAlignVertical: 'top' },
-  hint: { fontSize: 12, color: '#888', marginTop: 8, lineHeight: 17 },
   chip: {
     borderWidth: 1,
     borderColor: '#ccc',
@@ -347,23 +243,19 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   chipOn: { backgroundColor: '#4CAF50', borderColor: '#4CAF50' },
-  chipDisabled: { opacity: 0.5 },
   chipText: { color: '#333', fontWeight: '600' },
   chipTextOn: { color: '#fff' },
-  modeCol: { marginTop: 2 },
-  modeOption: {
-    borderWidth: 1,
-    borderColor: '#ccc',
+  codeBox: {
+    backgroundColor: '#f1f8e9',
     borderRadius: 10,
-    padding: 12,
-    marginBottom: 10,
+    padding: 16,
+    alignItems: 'center',
+    marginVertical: 12,
   },
-  modeOptionOn: { borderColor: '#4CAF50', backgroundColor: '#f1f8e9' },
-  modeTitle: { fontSize: 15, fontWeight: '700', color: '#333' },
-  modeTitleOn: { color: '#2e7d32' },
-  modeSub: { fontSize: 12, color: '#888', marginTop: 3, lineHeight: 16 },
+  codeText: { fontSize: 40, fontWeight: '800', letterSpacing: 8, color: '#2e7d32' },
+  codeHint: { fontSize: 12, color: '#777', marginTop: 6 },
   primaryBtn: {
-    marginTop: 18,
+    marginTop: 12,
     backgroundColor: '#4CAF50',
     padding: 14,
     borderRadius: 8,
@@ -382,16 +274,7 @@ const styles = StyleSheet.create({
   ghostBtnText: { color: '#4CAF50', fontWeight: '700' },
   removeText: {
     color: '#e53935',
-    textAlign: 'center',
-    marginTop: 14,
+    marginTop: 12,
     textDecorationLine: 'underline',
   },
-  codeBox: {
-    backgroundColor: '#f1f8e9',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 12,
-  },
-  codeBoxText: { fontSize: 13, color: '#33691e', fontFamily: 'monospace' },
-  warn: { color: '#e65100', marginTop: 12, fontSize: 13 },
 });
