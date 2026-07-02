@@ -25,6 +25,7 @@ import {
 import { Audio } from 'expo-av';
 import WheelTimePicker from '../components/WheelTimePicker';
 import DaysSelector from '../components/DaysSelector';
+import { createAddMedicineRequest } from '../utils/guardianCloud';
 
 const TONE_SOURCES = {
   alarm: require('../../assets/sounds/alarm.wav'),
@@ -78,6 +79,11 @@ function formatTime(hhmm) {
 export default function AddMedicineScreen({ route, navigation }) {
   const editingId = route.params?.medicineId || null;
   const isEdit = !!editingId;
+  // Guardian "request to add" mode: build the same form but submit as an
+  // approval request for the linked user instead of writing directly.
+  const requestUserId = route.params?.requestUserId || null;
+  const requestUsername = route.params?.requestUsername || null;
+  const isRequest = !!requestUserId;
 
   const [name, setName] = useState('');
   const [names, setNames] = useState([]);
@@ -103,7 +109,13 @@ export default function AddMedicineScreen({ route, navigation }) {
   };
 
   useEffect(() => {
-    navigation.setOptions({ title: isEdit ? 'Edit medicine' : 'Add medicine' });
+    navigation.setOptions({
+      title: isRequest
+        ? `Request for @${requestUsername}`
+        : isEdit
+        ? 'Edit medicine'
+        : 'Add medicine',
+    });
     if (!isEdit) return;
     (async () => {
       const user = await getSession();
@@ -193,6 +205,45 @@ export default function AddMedicineScreen({ route, navigation }) {
     if (frequency === 'weekly' && daysOfWeek.length === 0)
       return Alert.alert('Missing', 'Pick at least one day.');
 
+    const sharedDays =
+      frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
+    const buildDraft = (id, medName, medColor) => ({
+      id,
+      name: medName,
+      form: form || 'Tablet',
+      times,
+      snoozeMinutes,
+      frequency,
+      daysOfWeek: sharedDays,
+      toneId: toneId || 'classic',
+      alertGuardian,
+      color: medColor || '#FFFFFF',
+    });
+
+    // Guardian request mode: send each medicine as an approval request.
+    if (isRequest) {
+      setBusy(true);
+      try {
+        for (const e of entries) {
+          const res = await createAddMedicineRequest(
+            requestUserId,
+            buildDraft(undefined, e.name, e.color)
+          );
+          if (!res.ok) throw new Error(res.error || 'request failed');
+        }
+        Alert.alert(
+          'Request sent',
+          `Sent to @${requestUsername} for approval.`
+        );
+        navigation.goBack();
+      } catch (e) {
+        Alert.alert('Failed', String(e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     setBusy(true);
     try {
       const ok = await ensureNotificationSetup();
@@ -205,22 +256,6 @@ export default function AddMedicineScreen({ route, navigation }) {
       }
 
       const user = await getSession();
-      const sharedDays =
-        frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
-
-      const buildDraft = (id, medName, medColor) => ({
-        id,
-        name: medName,
-        form: form || 'Tablet',
-        times,
-        snoozeMinutes,
-        frequency,
-        daysOfWeek: sharedDays,
-        toneId: toneId || 'classic',
-        alertGuardian,
-        color: medColor || '#FFFFFF',
-        createdAt: new Date().toISOString(),
-      });
 
       if (isEdit) {
         await updateMedicine(
@@ -541,7 +576,13 @@ export default function AddMedicineScreen({ route, navigation }) {
 
       <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={busy}>
         <Text style={styles.saveBtnText}>
-          {busy ? 'Saving...' : isEdit ? 'Save changes' : 'Save'}
+          {busy
+            ? 'Saving...'
+            : isRequest
+            ? 'Send request'
+            : isEdit
+            ? 'Save changes'
+            : 'Save'}
         </Text>
       </TouchableOpacity>
 

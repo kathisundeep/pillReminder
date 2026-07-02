@@ -12,6 +12,7 @@ import AlarmScreen from './src/screens/AlarmScreen';
 import GuardianScreen from './src/screens/GuardianScreen';
 import GuardianDashboardScreen from './src/screens/GuardianDashboardScreen';
 import GuardianUserScreen from './src/screens/GuardianUserScreen';
+import ApprovalsScreen from './src/screens/ApprovalsScreen';
 import { getSession, recordDose, getMedicines } from './src/utils/storage';
 import {
   ensureNotificationSetup,
@@ -151,6 +152,11 @@ export default function App() {
           name="GuardianUser"
           component={GuardianUserScreen}
           options={{ title: 'Medicines' }}
+        />
+        <Stack.Screen
+          name="Approvals"
+          component={ApprovalsScreen}
+          options={{ title: 'Guardian requests' }}
         />
         <Stack.Screen
           name="Alarm"

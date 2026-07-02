@@ -17,9 +17,16 @@ import {
   getDoseEntries,
   setTakenToday,
   recordDose,
+  addMedicine,
 } from '../utils/storage';
 import { scheduleSnooze } from '../utils/notifications';
 import { sweepMissedDoses, notifyGuardianTaken } from '../utils/guardian';
+import {
+  getPendingRequests,
+  setRequestStatus,
+  getMyProfile,
+} from '../utils/guardianCloud';
+import { resyncAlarmsFromCloud } from '../utils/sync';
 
 function formatTime(hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
@@ -64,6 +71,7 @@ export default function HomeScreen({ navigation }) {
   const [user, setUser] = useState(null);
   const [slots, setSlots] = useState([]); // [{ time, items: [{med, state}] }]
   const [otherDays, setOtherDays] = useState([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
@@ -98,6 +106,32 @@ export default function HomeScreen({ navigation }) {
 
     // Catch up on any missed/skipped doses while the app was closed.
     sweepMissedDoses();
+
+    // Guardian add-medicine requests. If the user turned approval off, apply
+    // them automatically; otherwise surface a badge to review them.
+    try {
+      const pending = await getPendingRequests();
+      if (pending.length > 0) {
+        const profile = await getMyProfile();
+        const approvalRequired = profile?.settings?.approvalRequired !== false;
+        if (!approvalRequired) {
+          for (const r of pending) {
+            try {
+              await addMedicine(null, r.payload);
+              await setRequestStatus(r.id, 'approved');
+            } catch (e) {}
+          }
+          await resyncAlarmsFromCloud();
+          setPendingCount(0);
+        } else {
+          setPendingCount(pending.length);
+        }
+      } else {
+        setPendingCount(0);
+      }
+    } catch (e) {
+      setPendingCount(0);
+    }
   }, [navigation]);
 
   useFocusEffect(
@@ -206,6 +240,18 @@ export default function HomeScreen({ navigation }) {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
+        {pendingCount > 0 && (
+          <TouchableOpacity
+            style={styles.approvalBanner}
+            onPress={() => navigation.navigate('Approvals')}
+          >
+            <Text style={styles.approvalText}>
+              {pendingCount} guardian request{pendingCount > 1 ? 's' : ''} to review
+            </Text>
+            <Text style={styles.approvalChevron}>›</Text>
+          </TouchableOpacity>
+        )}
+
         {slots.length === 0 && otherDays.length === 0 && (
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No medicines yet.</Text>
@@ -494,6 +540,18 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     opacity: 0.85,
   },
+  approvalBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff3e0',
+    borderWidth: 1,
+    borderColor: '#ffb74d',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  approvalText: { flex: 1, color: '#e65100', fontWeight: '700' },
+  approvalChevron: { color: '#e65100', fontSize: 22 },
   empty: { alignItems: 'center', marginTop: 80 },
   emptyText: { fontSize: 18, color: '#555' },
   emptySub: { color: '#888', marginTop: 6 },
