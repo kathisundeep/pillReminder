@@ -13,7 +13,10 @@ import GuardianScreen from './src/screens/GuardianScreen';
 import GuardianDashboardScreen from './src/screens/GuardianDashboardScreen';
 import GuardianUserScreen from './src/screens/GuardianUserScreen';
 import ApprovalsScreen from './src/screens/ApprovalsScreen';
-import { getSession, recordDose, getMedicines } from './src/utils/storage';
+import TrackersScreen from './src/screens/TrackersScreen';
+import HealthReportScreen from './src/screens/HealthReportScreen';
+import PlansScreen from './src/screens/PlansScreen';
+import { getSession, recordDose, getMedicines, pruneOldHistory } from './src/utils/storage';
 import {
   ensureNotificationSetup,
   scheduleSnooze,
@@ -39,7 +42,10 @@ export default function App() {
       setInitialRoute(user ? 'Home' : 'Login');
       // If already logged in, re-arm local alarms from the cloud medicine list
       // (so alarms work after a reboot or on a freshly-signed-in device).
-      if (user) resyncAlarmsFromCloud();
+      if (user) {
+        resyncAlarmsFromCloud();
+        pruneOldHistory(); // 2-year retention fallback
+      }
       // Guardian: register for push (to be a guardian), schedule the
       // periodic background sweep, and run one sweep right away.
       registerForPushTokenAsync();
@@ -157,6 +163,21 @@ export default function App() {
           name="Approvals"
           component={ApprovalsScreen}
           options={{ title: 'Guardian requests' }}
+        />
+        <Stack.Screen
+          name="Trackers"
+          component={TrackersScreen}
+          options={{ title: 'Health trackers' }}
+        />
+        <Stack.Screen
+          name="HealthReport"
+          component={HealthReportScreen}
+          options={{ title: 'Health report' }}
+        />
+        <Stack.Screen
+          name="Plans"
+          component={PlansScreen}
+          options={{ title: 'Plans & subscription' }}
         />
         <Stack.Screen
           name="Alarm"

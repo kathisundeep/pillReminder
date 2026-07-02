@@ -240,6 +240,27 @@ export default function HomeScreen({ navigation }) {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
+        <View style={styles.quickRow}>
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('Trackers')}
+          >
+            <Text style={styles.quickText}>📊 Trackers</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('HealthReport')}
+          >
+            <Text style={styles.quickText}>📄 Report</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('Plans')}
+          >
+            <Text style={styles.quickText}>⭐ Plans</Text>
+          </TouchableOpacity>
+        </View>
+
         {pendingCount > 0 && (
           <TouchableOpacity
             style={styles.approvalBanner}
@@ -540,6 +561,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     opacity: 0.85,
   },
+  quickRow: { flexDirection: 'row', marginBottom: 12 },
+  quickBtn: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginHorizontal: 4,
+    elevation: 1,
+  },
+  quickText: { color: '#333', fontWeight: '700', fontSize: 13 },
   approvalBanner: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -297,6 +297,23 @@ export async function setTakenToday(user, medicineId, taken) {
   }
 }
 
+// Delete this user's dose history older than 2 years (client-side fallback for
+// the server pg_cron retention job).
+export async function pruneOldHistory() {
+  try {
+    const uid = await currentUid();
+    if (!uid) return;
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - 2);
+    const cutoffKey = cutoff.toISOString().slice(0, 10);
+    await supabase
+      .from('dose_history')
+      .delete()
+      .eq('user_id', uid)
+      .lt('day', cutoffKey);
+  } catch (e) {}
+}
+
 // Assemble a { day: { medId: [{status, at}] } } map (kept for compatibility).
 export async function getHistory(user) {
   const uid = await currentUid();

@@ -72,6 +72,14 @@ export default function GuardianUserScreen({ route, navigation }) {
       >
         <Text style={styles.requestBtnText}>+ Request to add a medicine</Text>
       </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.reportBtn}
+        onPress={() =>
+          navigation.navigate('HealthReport', { userId, username })
+        }
+      >
+        <Text style={styles.reportBtnText}>📄 View health report</Text>
+      </TouchableOpacity>
       {meds.length === 0 ? (
         <Text style={styles.empty}>No medicines added yet.</Text>
       ) : (
@@ -109,6 +117,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   requestBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  reportBtn: {
+    borderWidth: 1,
+    borderColor: '#00796b',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  reportBtnText: { color: '#00796b', fontWeight: '700', fontSize: 14 },
   empty: { color: '#888', marginTop: 20, textAlign: 'center' },
   card: {
     backgroundColor: '#fff',
