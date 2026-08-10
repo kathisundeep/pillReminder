@@ -17,7 +17,11 @@ import { resyncAlarmsFromCloud } from '../utils/sync';
 import { getMyProfile } from '../utils/guardianCloud';
 import { ROLES, roleMatchesAccount, useRole } from '../utils/role';
 import { Button, Field, Input, Segmented } from '../components/ui';
+import { runningUpdate } from '../utils/updates';
 import { colors, type } from '../theme';
+
+const appVersion = require('../../app.json').expo.version;
+const buildInfo = runningUpdate();
 
 export default function LoginScreen({ navigation }) {
   const { setRole } = useRole();
@@ -140,6 +144,16 @@ export default function LoginScreen({ navigation }) {
         >
           Don't have an account? Register
         </Text>
+
+        {/* Which build is running, on the FIRST screen — before any login.
+            The same line exists in Settings, but Settings is behind an
+            account, so it is unreachable exactly when it is most needed:
+            when registration itself is not behaving and the question is
+            whether the app is even running the code you think it is. */}
+        <Text style={styles.build}>
+          {`v${appVersion} · ${buildInfo.short}`}
+          {buildInfo.embedded ? ' (as installed)' : ''}
+        </Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -174,5 +188,11 @@ const styles = StyleSheet.create({
     marginTop: 20,
     fontSize: 13.5,
     fontWeight: '700',
+  },
+  build: {
+    textAlign: 'center',
+    marginTop: 26,
+    fontSize: 11,
+    color: colors.muted,
   },
 });
