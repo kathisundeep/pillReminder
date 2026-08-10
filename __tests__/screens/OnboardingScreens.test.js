@@ -160,6 +160,42 @@ describe('RegisterScreen', () => {
     expect(screen.getByText('Enter the code')).toBeTruthy();
   });
 
+  // With no SMS provider the server hands the code back so registration can be
+  // exercised end to end. It has to be impossible to mistake for normal.
+  describe('test mode', () => {
+    async function reachCodeStep(sendResult) {
+      db().onFunction('send-otp', async () => sendResult);
+      await showScreen(RegisterScreen);
+      await press('Continue');
+      await typeInto('e.g. sundeep', 'newbie');
+      await press('Check and continue');
+      await typeInto('98765 43210', '9876543210');
+      await press('Send code');
+    }
+
+    it('shows the code and says plainly that no SMS was sent', async () => {
+      await reachCodeStep({ ok: true, testMode: true, testCode: '424242' });
+
+      expect(screen.getByText('424242')).toBeTruthy();
+      expect(screen.getByText(/TEST MODE — no SMS was sent/)).toBeTruthy();
+      expect(screen.getByText(/must be turned off before real users/)).toBeTruthy();
+    });
+
+    it('shows nothing at all when a provider is configured', async () => {
+      await reachCodeStep({ ok: true });
+
+      expect(screen.queryByText(/TEST MODE/)).toBeNull();
+      expect(screen.getByText(/We sent a 6-digit code/)).toBeTruthy();
+    });
+
+    // The code is displayed, never pre-filled: typing it is what proves the
+    // step works, and a filled field would hide a broken verify call.
+    it('does not fill the field in for you', async () => {
+      await reachCodeStep({ ok: true, testMode: true, testCode: '424242' });
+      expect(screen.getByPlaceholderText('000000').props.value).toBe('');
+    });
+  });
+
   it('rejects a wrong code and stays on the step', async () => {
     backendAccepts({ code: '999999' });
     await showScreen(RegisterScreen);

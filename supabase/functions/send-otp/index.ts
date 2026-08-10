@@ -53,7 +53,29 @@ Deno.serve(async (req) => {
 
     await sendSms(phone, `${code} is your PillReminder verification code. It expires in ${LIMITS.codeTtlMinutes} minutes.`);
 
-    return json({ ok: true, verificationId: row.id });
+    // TEST MODE ONLY.
+    //
+    // With no SMS provider configured, ALLOW_UNSENT_OTP lets registration be
+    // exercised end to end by handing the code straight back to the caller.
+    // That is account takeover for anyone who can reach this endpoint — which
+    // is anyone at all — so it is deliberately tied to the same flag that
+    // already declares this is not a production environment, and the response
+    // is marked so the app can shout about it rather than quietly accept it.
+    //
+    // Setting SMS_PROVIDER disables this outright: the branch is unreachable
+    // once a provider exists, so a real deployment cannot leak codes even if
+    // the flag is left set by mistake.
+    const unsent =
+      !Deno.env.get('SMS_PROVIDER') && Deno.env.get('ALLOW_UNSENT_OTP') === 'true';
+    if (unsent) {
+      console.warn(`[send-otp] TEST MODE — returned the code for ${phone} in the response`);
+    }
+
+    return json({
+      ok: true,
+      verificationId: row.id,
+      ...(unsent ? { testMode: true, testCode: code } : {}),
+    });
   } catch (e) {
     console.error('send-otp', e);
     return json({ error: 'Could not send the code. Please try again.' }, 500);

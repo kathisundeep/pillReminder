@@ -53,6 +53,10 @@ export default function RegisterScreen({ navigation }) {
   const [country, setCountry] = useState(() => detectCountry());
   const [national, setNational] = useState('');
   const [code, setCode] = useState('');
+  // Only ever set when the server says no SMS provider is configured. It is
+  // shown loudly rather than quietly filled in, so a test build can never be
+  // mistaken for a working one.
+  const [testCode, setTestCode] = useState(null);
 
   const phone = composePhone(country, national);
   const [claimToken, setClaimToken] = useState(null);
@@ -125,6 +129,7 @@ export default function RegisterScreen({ navigation }) {
       }
       const sent = await sendPhoneCode(phone, asGuardian);
       if (!sent.ok) return setProblem(sent.error);
+      setTestCode(sent.testMode ? sent.testCode : null);
       go('code');
     } finally {
       setBusy(false);
@@ -234,6 +239,22 @@ export default function RegisterScreen({ navigation }) {
       hint: `We sent a 6-digit code to ${normalisePhone(phone) || phone}. It expires in 10 minutes.`,
       body: (
         <>
+          {testCode ? (
+            <View style={styles.testMode}>
+              <Text style={styles.testModeTitle}>
+                TEST MODE — no SMS was sent
+              </Text>
+              <Text style={styles.testModeCode} selectable>
+                {testCode}
+              </Text>
+              <Text style={styles.testModeBody}>
+                No SMS provider is configured on the server, so the code is
+                shown here instead. Anyone could register as anyone while this
+                is on — it must be turned off before real users.
+              </Text>
+            </View>
+          ) : null}
+
           <Field label="6-digit code">
             <Input
               placeholder="000000"
@@ -369,6 +390,31 @@ const styles = StyleSheet.create({
   },
   body: { marginBottom: 8 },
   codeInput: { letterSpacing: 8, fontWeight: '800', textAlign: 'center', fontSize: 20 },
+  testMode: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.skipText,
+    backgroundColor: colors.skipBg,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 18,
+    gap: 6,
+  },
+  testModeTitle: {
+    ...type.label,
+    color: colors.skipText,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  testModeCode: {
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 8,
+    color: colors.heading,
+    textAlign: 'center',
+    paddingVertical: 2,
+  },
+  testModeBody: { fontSize: 12, lineHeight: 17, color: colors.skipText },
   resend: {
     fontSize: 13,
     fontWeight: '700',
