@@ -15,7 +15,10 @@ import {
 import { getMyDetails } from '../utils/profile';
 import { logoutUser } from '../utils/storage';
 import { clearStoredRole, useRole, ROLES } from '../utils/role';
+import { applyUpdateIfAny, runningUpdate } from '../utils/updates';
 import { colors } from '../theme';
+
+const appVersion = require('../../app.json').expo.version;
 
 // What a user may and may not change about themselves.
 //
@@ -30,6 +33,8 @@ export default function SettingsScreen({ navigation }) {
   const { role, setRole } = useRole();
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [updateNote, setUpdateNote] = useState(null);
+  const [build] = useState(() => runningUpdate());
 
   const load = useCallback(async () => {
     setDetails(await getMyDetails());
@@ -46,6 +51,22 @@ export default function SettingsScreen({ navigation }) {
     await logoutUser();
     await clearStoredRole();
     setRole(null);
+  };
+
+  const onCheckForUpdate = async () => {
+    setUpdateNote('Checking…');
+    const result = await applyUpdateIfAny();
+    // 'applied' rarely lands here — the app reloads out from under it.
+    setUpdateNote(
+      {
+        none: "You're on the latest version",
+        applied: 'Updating…',
+        failed: "Couldn't check. Are you online?",
+        disabled: 'Updates are off in this build',
+        held: 'Busy right now — try again in a moment',
+        busy: 'Already checking…',
+      }[result] || 'Tap to check for updates'
+    );
   };
 
   const notYet = (what) =>
@@ -191,6 +212,16 @@ export default function SettingsScreen({ navigation }) {
         </Card>
 
         <Button title="Log out" variant="danger" onPress={onLogout} />
+
+        {/* Which bundle is actually running. Without this there is no way to
+            tell an update that failed to apply from a change that did not
+            work — the two look identical from the outside. */}
+        <Text style={styles.build} onPress={onCheckForUpdate} accessibilityRole="button">
+          {`Version ${appVersion} · ${build.short}`}
+          {build.embedded ? ' (as installed)' : ''}
+          {'\n'}
+          {updateNote || 'Tap to check for updates'}
+        </Text>
       </Content>
     </Screen>
   );
@@ -198,6 +229,13 @@ export default function SettingsScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  build: {
+    textAlign: 'center',
+    fontSize: 11.5,
+    lineHeight: 17,
+    color: colors.muted,
+    paddingVertical: 18,
+  },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   name: { fontSize: 17, fontWeight: '800', color: colors.heading },
   handle: { fontSize: 13, color: colors.muted, marginTop: 2 },

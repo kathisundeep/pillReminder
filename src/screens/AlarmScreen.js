@@ -7,6 +7,7 @@ import { scheduleSnooze, toneById } from '../utils/notifications';
 import { notifyGuardianTaken, sweepMissedDoses } from '../utils/guardian';
 import MedThumb from '../components/MedThumb';
 import { Button } from '../components/ui';
+import { holdUpdates } from '../utils/updates';
 import { colors, radius, formFor } from '../theme';
 
 const TONE_SOURCES = {
@@ -29,6 +30,10 @@ export default function AlarmScreen({ route, navigation }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    // An over-the-air reload here would dismiss the alarm without recording
+    // anything, which reads to the user as a dose that silently vanished.
+    const releaseUpdateHold = holdUpdates();
 
     activateKeepAwakeAsync('alarm');
     Vibration.vibrate(ALARM_PATTERN, true);
@@ -88,6 +93,7 @@ export default function AlarmScreen({ route, navigation }) {
 
     return () => {
       cancelled = true;
+      releaseUpdateHold();
       Vibration.cancel();
       deactivateKeepAwake('alarm');
       (async () => {

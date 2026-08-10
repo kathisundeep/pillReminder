@@ -328,3 +328,39 @@ globalThis.fetch = jest.fn(async () => ({
   status: 200,
   json: async () => ({ data: { status: 'ok', id: 'receipt-1' } }),
 }));
+
+// expo-updates — stateful so tests can drive the check/fetch/reload sequence.
+// Defaults to enabled with nothing available, which is the steady state.
+jest.mock('expo-updates', () => {
+  const state = {
+    isEnabled: true,
+    isEmbeddedLaunch: true,
+    updateId: null,
+    channel: 'preview',
+    runtimeVersion: '1.1.0',
+    createdAt: null,
+    available: false,
+    isNew: true,
+    checkThrows: null,
+    fetchThrows: null,
+  };
+  const mock = {
+    __state: state,
+    get isEnabled() { return state.isEnabled; },
+    get isEmbeddedLaunch() { return state.isEmbeddedLaunch; },
+    get updateId() { return state.updateId; },
+    get channel() { return state.channel; },
+    get runtimeVersion() { return state.runtimeVersion; },
+    get createdAt() { return state.createdAt; },
+    checkForUpdateAsync: jest.fn(async () => {
+      if (state.checkThrows) throw new Error(state.checkThrows);
+      return { isAvailable: state.available };
+    }),
+    fetchUpdateAsync: jest.fn(async () => {
+      if (state.fetchThrows) throw new Error(state.fetchThrows);
+      return { isNew: state.isNew };
+    }),
+    reloadAsync: jest.fn(async () => {}),
+  };
+  return mock;
+});

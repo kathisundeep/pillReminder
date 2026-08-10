@@ -32,6 +32,7 @@ import {
 } from './src/utils/guardian';
 import { resyncAlarmsFromCloud } from './src/utils/sync';
 import { ROLES, RoleProvider, resolveRole } from './src/utils/role';
+import { applyUpdateIfAny } from './src/utils/updates';
 import ErrorBoundary from './src/components/ErrorBoundary';
 
 const Stack = createNativeStackNavigator();
@@ -61,11 +62,18 @@ export default function App() {
       registerForPushTokenAsync();
       registerBackgroundSweep();
       sweepMissedDoses();
+
+      // Last, so a reload cannot cut short the setup above.
+      applyUpdateIfAny();
     })();
 
-    // Re-check for missed doses whenever the app returns to the foreground.
+    // Re-check for missed doses whenever the app returns to the foreground —
+    // and pick up any published update, so a change never sits downloaded but
+    // unapplied waiting for a cold start that Android may never give it.
     const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') sweepMissedDoses();
+      if (state !== 'active') return;
+      sweepMissedDoses();
+      applyUpdateIfAny();
     });
 
     // Each role registers a different set of screens, so a route that exists in
