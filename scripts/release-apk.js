@@ -22,6 +22,7 @@
 // whatever log or transcript was capturing it.
 
 const { execFileSync } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -89,6 +90,45 @@ function run(cmd, args, opts = {}) {
   }
 }
 
+function sha256File(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+// Download what the QR actually points at and prove it is byte-for-byte the
+// file we meant to publish.
+//
+// Publishing is several steps — create a release, upload an asset, let
+// `latest` move — and a wrong-but-plausible result at any of them looks
+// identical to success from the publishing side. The only trustworthy check is
+// to fetch the public URL the way a phone would.
+async function verifyPublished(repo, expectedSum) {
+  const url = `https://github.com/${repo}/releases/latest/download/${ASSET}`;
+  process.stdout.write('Verifying what the QR now serves… ');
+
+  const res = await fetch(url, { redirect: 'follow' });
+  if (!res.ok) {
+    console.log('');
+    throw new Error(`The published URL returned ${res.status}: ${url}`);
+  }
+  const served = crypto
+    .createHash('sha256')
+    .update(Buffer.from(await res.arrayBuffer()))
+    .digest('hex');
+
+  if (served !== expectedSum) {
+    console.log('MISMATCH\n');
+    throw new Error(
+      'The QR is serving a DIFFERENT file from the build that was just published.\n' +
+        `  expected ${expectedSum.slice(0, 16)}…\n` +
+        `  served   ${served.slice(0, 16)}…\n\n` +
+        '  Nothing was corrupted — an older release is probably still marked\n' +
+        '  `latest`, or the asset upload silently kept the previous file.\n' +
+        `  Check https://github.com/${repo}/releases`
+    );
+  }
+  console.log('matches.');
+}
+
 function has(cmd) {
   try {
     execFileSync('which', [cmd], { stdio: 'ignore' });
@@ -154,18 +194,48 @@ async function github(url, { method = 'GET', body, contentType } = {}) {
   return res;
 }
 
+// Re-runnable. A failed or wrong publish must be fixable by running the same
+// command again, rather than needing the release deleted by hand first.
 async function publishWithToken(repo, tag, file, title, notes) {
-  const created = await github(`https://api.github.com/repos/${repo}/releases`, {
-    method: 'POST',
-    contentType: 'application/json',
-    body: JSON.stringify({
-      tag_name: tag,
-      name: title,
-      body: notes,
-      make_latest: 'true',
-    }),
-  });
-  const { id } = await created.json();
+  let id = null;
+
+  // GitHub rejects a second release for the same tag, so adopt the existing one.
+  const found = await fetch(
+    `https://api.github.com/repos/${repo}/releases/tags/${tag}`,
+    { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } }
+  );
+  if (found.ok) {
+    const existing = await found.json();
+    id = existing.id;
+    console.log(`Release ${tag} already exists — replacing its asset.`);
+
+    // An upload does not overwrite: without this the old file simply stays.
+    for (const asset of existing.assets || []) {
+      if (asset.name === ASSET) {
+        await github(
+          `https://api.github.com/repos/${repo}/releases/assets/${asset.id}`,
+          { method: 'DELETE' }
+        );
+      }
+    }
+    await github(`https://api.github.com/repos/${repo}/releases/${id}`, {
+      method: 'PATCH',
+      contentType: 'application/json',
+      body: JSON.stringify({ name: title, body: notes, make_latest: 'true' }),
+    });
+  } else {
+    const created = await github(`https://api.github.com/repos/${repo}/releases`, {
+      method: 'POST',
+      contentType: 'application/json',
+      body: JSON.stringify({
+        tag_name: tag,
+        name: title,
+        body: notes,
+        make_latest: 'true',
+      }),
+    });
+    id = (await created.json()).id;
+  }
 
   await github(
     `https://uploads.github.com/repos/${repo}/releases/${id}/assets?name=${ASSET}`,
@@ -233,20 +303,31 @@ async function main() {
   }
 
   const tag = `v${version}-${build.id.slice(0, 7)}`;
-  const tmp = path.join(os.tmpdir(), ASSET);
+
+  // The temp filename MUST carry the build id.
+  //
+  // It used to be a constant, so a second run found the previous build's APK
+  // already sitting there, logged "Reusing the APK already downloaded", and
+  // published stale bytes under the new build's tag. The release looked
+  // correct from every angle — right tag, right size, right asset name — while
+  // serving the old app. Diagnosing that from the phone is near impossible,
+  // because the only symptom is that a change you know you shipped is absent.
+  const tmp = path.join(os.tmpdir(), `pillreminder-${build.id}.apk`);
 
   console.log(`Build   ${build.id}`);
   console.log(`Version ${version}`);
   console.log(`Tag     ${tag}`);
 
-  // Skip the download if a previous run already fetched this build's APK.
   if (!fs.existsSync(tmp) || process.env.FORCE_DOWNLOAD === 'true') {
     console.log('Downloading the APK…');
     run('curl', ['-fsSL', '-o', tmp, build.artifacts.buildUrl]);
   } else {
-    console.log('Reusing the APK already downloaded to the temp directory.');
+    console.log('Reusing this build\'s APK from the temp directory.');
   }
-  console.log(`APK ${(fs.statSync(tmp).size / 1024 / 1024).toFixed(1)} MB`);
+
+  const localSum = sha256File(tmp);
+  console.log(`APK     ${(fs.statSync(tmp).size / 1024 / 1024).toFixed(1)} MB`);
+  console.log(`SHA-256 ${localSum.slice(0, 16)}…`);
 
   // A fresh tag each time keeps the release history readable; `latest` follows
   // whichever was published most recently, which is what the QR relies on.
@@ -258,19 +339,33 @@ async function main() {
 
   console.log(`Publishing to ${repo} releases…`);
   if (useGh) {
-    run('gh', [
-      'release', 'create', tag, `${tmp}#${ASSET}`,
-      '--title', title, '--notes', notes, '--latest',
-      '--repo', repo,
-    ], { stdio: 'inherit' });
+    // `create` fails outright if the tag exists, so try it and fall back to
+    // clobbering the asset on the release that is already there.
+    try {
+      run('gh', [
+        'release', 'create', tag, `${tmp}#${ASSET}`,
+        '--title', title, '--notes', notes, '--latest',
+        '--repo', repo,
+      ], { stdio: 'inherit' });
+    } catch (e) {
+      console.log(`Release ${tag} already exists — replacing its asset.`);
+      run('gh', [
+        'release', 'upload', tag, `${tmp}#${ASSET}`,
+        '--clobber', '--repo', repo,
+      ], { stdio: 'inherit' });
+    }
   } else {
     await publishWithToken(repo, tag, tmp, title, notes);
   }
 
+  // GitHub's CDN needs a moment before `latest` resolves to the new asset.
+  await new Promise((r) => setTimeout(r, 3000));
+  await verifyPublished(repo, localSum);
+
   console.log(
     `\nDone. https://github.com/${repo}/releases/latest/download/${ASSET}\n` +
-      'now serves this build, so the QR in apk-qr.png installs it.\n' +
-      'No need to regenerate or rescan.'
+      'now serves this build, verified byte-for-byte, so the QR in apk-qr.png\n' +
+      'installs it. No need to regenerate or rescan.'
   );
 }
 
