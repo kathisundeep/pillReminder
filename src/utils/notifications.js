@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 
 const CHANNEL_ID = 'pill-alarm-v2';
+export const SNOOZE_TITLE = 'Snoozed reminder';
 const ALARM_SOUND = 'alarm';
 
 // Selectable, bundled alarm tones. `sound` is the res/raw file name (no ext);
@@ -70,24 +71,27 @@ export async function ensureNotificationSetup() {
       enableVibrate: true,
     });
 
-    await Notifications.setNotificationCategoryAsync('pill-alarm-actions', [
-      {
-        identifier: 'TAKEN',
-        buttonTitle: 'Taken',
-        options: { opensAppToForeground: true },
-      },
-      {
-        identifier: 'RESCHEDULE',
-        buttonTitle: 'Reschedule',
-        options: { opensAppToForeground: true },
-      },
-      {
-        identifier: 'SKIP',
-        buttonTitle: 'Skip',
-        options: { opensAppToForeground: true },
-      },
-    ]);
   }
+
+  // Cross-platform: notification categories are how iOS gets action buttons at
+  // all. Registering this inside the Android block left iOS with none.
+  await Notifications.setNotificationCategoryAsync('pill-alarm-actions', [
+    {
+      identifier: 'TAKEN',
+      buttonTitle: 'Taken',
+      options: { opensAppToForeground: true },
+    },
+    {
+      identifier: 'RESCHEDULE',
+      buttonTitle: 'Reschedule',
+      options: { opensAppToForeground: true },
+    },
+    {
+      identifier: 'SKIP',
+      buttonTitle: 'Skip',
+      options: { opensAppToForeground: true },
+    },
+  ]);
 
   return true;
 }
@@ -97,16 +101,23 @@ export async function getPermissionStatus() {
   return p.status;
 }
 
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
 function alarmContent(
   medicineId,
   medicineName,
   titlePrefix = 'Time for your medicine',
-  sound = ALARM_SOUND
+  sound = ALARM_SOUND,
+  slot = null
 ) {
   return {
     title: titlePrefix,
     body: `Take ${medicineName} now`,
-    data: { medicineId, medicineName, type: 'pill-alarm' },
+    // `slot` is the scheduled "HH:MM" this alarm belongs to. Doses are keyed by
+    // it, so acting on the notification must know which dose it was.
+    data: { medicineId, medicineName, slot, type: 'pill-alarm' },
     sound,
     priority: Notifications.AndroidNotificationPriority.MAX,
     categoryIdentifier: 'pill-alarm-actions',
@@ -118,8 +129,9 @@ function alarmContent(
 
 export async function scheduleDailyAlarm({ medicineId, medicineName, hour, minute, toneId }) {
   const tone = toneById(toneId);
+  const slot = `${pad2(hour)}:${pad2(minute)}`;
   const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName, undefined, tone.sound),
+    content: alarmContent(medicineId, medicineName, undefined, tone.sound, slot),
     trigger: {
       hour,
       minute,
@@ -132,8 +144,9 @@ export async function scheduleDailyAlarm({ medicineId, medicineName, hour, minut
 
 export async function scheduleWeeklyAlarm({ medicineId, medicineName, weekday, hour, minute, toneId }) {
   const tone = toneById(toneId);
+  const slot = `${pad2(hour)}:${pad2(minute)}`;
   const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName, undefined, tone.sound),
+    content: alarmContent(medicineId, medicineName, undefined, tone.sound, slot),
     trigger: {
       weekday,
       hour,
@@ -145,12 +158,19 @@ export async function scheduleWeeklyAlarm({ medicineId, medicineName, weekday, h
   return id;
 }
 
-export async function scheduleSnooze({ medicineId, medicineName, minutes, toneId }) {
+export async function scheduleSnooze({ medicineId, medicineName, minutes, toneId, slot }) {
   const tone = toneById(toneId);
+  // Guard the arithmetic: an absent or non-numeric `minutes` used to produce a
+  // NaN delay, i.e. an alarm that never fires. "Not specified" falls back to the
+  // 10-minute default; "specified but too small" is floored at 60 seconds.
+  const mins = minutes == null ? NaN : Number(minutes);
+  const seconds = Number.isFinite(mins) ? Math.max(60, mins * 60) : 600;
   const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName, 'Snoozed reminder', tone.sound),
+    content: alarmContent(
+      medicineId, medicineName, SNOOZE_TITLE, tone.sound, slot ?? null
+    ),
     trigger: {
-      seconds: Math.max(60, minutes * 60),
+      seconds,
       repeats: false,
       channelId: tone.channelId,
     },
@@ -174,11 +194,33 @@ export async function cancelManyNotifications(ids) {
   for (const id of ids || []) await cancelNotification(id);
 }
 
-// Wipe every scheduled notification and re-arm alarms for the given medicines.
-// This guarantees no stale/duplicate/leftover-snooze notifications survive,
-// which is the usual cause of alarms firing at unexpected times.
+// Re-arm the repeating alarms for the given medicines, clearing any stale or
+// duplicate ones first.
+//
+// Pending SNOOZES are deliberately preserved. They are one-shot reminders the
+// user explicitly asked for, and this runs on every app launch — cancelling
+// everything meant snoozing a dose and switching apps silently lost the
+// re-alarm.
 export async function resyncAlarms(medicines) {
+  const existing = await Notifications.getAllScheduledNotificationsAsync();
+  const pendingSnoozes = (existing || []).filter(
+    (n) => n.content?.title === SNOOZE_TITLE
+  );
+
   await Notifications.cancelAllScheduledNotificationsAsync();
+
+  // Put the snoozes back exactly as they were.
+  for (const snooze of pendingSnoozes) {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: snooze.content,
+        trigger: snooze.trigger,
+      });
+    } catch (e) {
+      /* a snooze that cannot be re-armed is not worth failing the resync for */
+    }
+  }
+
   const idMap = {};
   for (const med of medicines || []) {
     idMap[med.id] = await scheduleForMedicine(med);

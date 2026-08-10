@@ -1,16 +1,13 @@
-import React, { useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Vibration,
-} from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Vibration } from 'react-native';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { Audio, InterruptionModeAndroid } from 'expo-av';
 import { getSession, recordDose, getMedicines, getMedicine } from '../utils/storage';
 import { scheduleSnooze, toneById } from '../utils/notifications';
 import { notifyGuardianTaken, sweepMissedDoses } from '../utils/guardian';
+import MedThumb from '../components/MedThumb';
+import { Button } from '../components/ui';
+import { colors, radius, formFor } from '../theme';
 
 const TONE_SOURCES = {
   alarm: require('../../assets/sounds/alarm.wav'),
@@ -23,8 +20,12 @@ const TONE_SOURCES = {
 const ALARM_PATTERN = [0, 800, 400, 800, 400, 800];
 
 export default function AlarmScreen({ route, navigation }) {
-  const { medicineId, medicineName } = route.params || {};
+  const { medicineId, medicineName, slot = null } = route.params || {};
+  const [snoozeMinutes, setSnoozeMinutes] = useState(10);
   const soundRef = useRef(null);
+  const [photo, setPhoto] = useState(null);
+  const [form, setForm] = useState('Tablet');
+  const [color, setColor] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +51,12 @@ export default function AlarmScreen({ route, navigation }) {
               const med = await getMedicine(user, medicineId);
               const tone = toneById(med?.toneId);
               source = TONE_SOURCES[tone.sound] || TONE_SOURCES.alarm;
+              // The photo rides along in the offline medicines cache, so it
+              // still shows when the alarm fires with no network.
+              if (med?.photo && !cancelled) setPhoto(med.photo);
+              if (med?.snoozeMinutes && !cancelled) setSnoozeMinutes(med.snoozeMinutes);
+              if (med?.form && !cancelled) setForm(med.form);
+              if (med?.color && !cancelled) setColor(med.color);
             }
           } catch (e) {}
         }
@@ -110,7 +117,7 @@ export default function AlarmScreen({ route, navigation }) {
     await stopAlarm();
     const user = await getSession();
     if (user) {
-      await recordDose(user, medicineId, 'taken');
+      await recordDose(user, medicineId, 'taken', slot);
       await notifyGuardianTaken(user, medicineName || 'medicine');
     }
     navigation.replace('Home');
@@ -120,13 +127,15 @@ export default function AlarmScreen({ route, navigation }) {
     await stopAlarm();
     const user = await getSession();
     if (user) {
-      await recordDose(user, medicineId, 'snoozed');
+      await recordDose(user, medicineId, 'snoozed', slot);
       const meds = await getMedicines(user);
       const med = meds.find((m) => m.id === medicineId);
       await scheduleSnooze({
         medicineId,
         medicineName: medicineName || med?.name || 'medicine',
         minutes,
+        toneId: med?.toneId,
+        slot,
       });
     }
     navigation.replace('Home');
@@ -137,46 +146,52 @@ export default function AlarmScreen({ route, navigation }) {
     const user = await getSession();
     if (user) {
       // Explicit skip — guardian is alerted by the missed-dose sweep.
-      await recordDose(user, medicineId, 'skipped');
+      await recordDose(user, medicineId, 'skipped', slot);
       sweepMissedDoses();
     }
     navigation.replace('Home');
   };
 
+  const med = { name: medicineName, photo, form, color };
+
   return (
     <View style={styles.container}>
-      <Text style={styles.time}>
-        {new Date().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-        })}
-      </Text>
-      <Text style={styles.subtitle}>Time to take your</Text>
-      <Text style={styles.medName}>{medicineName || 'medicine'}</Text>
-      <Text style={styles.question}>What would you like to do?</Text>
-
-      <TouchableOpacity style={styles.takenBtn} onPress={onTook}>
-        <Text style={styles.takenBtnText}>✓  Taken</Text>
-      </TouchableOpacity>
-
-      <View style={styles.rescheduleRow}>
-        <TouchableOpacity
-          style={styles.rescheduleBtn}
-          onPress={() => onReschedule(5)}
-        >
-          <Text style={styles.rescheduleText}>Reschedule 5 min</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.rescheduleBtn}
-          onPress={() => onReschedule(10)}
-        >
-          <Text style={styles.rescheduleText}>Reschedule 10 min</Text>
-        </TouchableOpacity>
+      <View style={styles.top}>
+        <Text style={styles.eyebrow}>PillReminder alarm</Text>
+        <Text style={styles.time}>
+          {new Date().toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </Text>
       </View>
 
-      <TouchableOpacity style={styles.skipBtn} onPress={onSkip}>
-        <Text style={styles.skipText}>✗  Skip this dose</Text>
-      </TouchableOpacity>
+      <View style={styles.middle}>
+        <View style={styles.medCard}>
+          <MedThumb med={med} size={photo ? 132 : 96} />
+          <Text style={styles.medName}>{medicineName || 'medicine'}</Text>
+          <Text style={styles.medMeta}>
+            {formFor(form).label}
+            {snoozeMinutes ? ` • Snooze ${snoozeMinutes} min` : ''}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.actions}>
+        <Button title="✓  Mark taken" onPress={onTook} style={styles.action} />
+        <Button
+          title={`Snooze ${snoozeMinutes} minutes`}
+          variant="ghost"
+          onPress={() => onReschedule(snoozeMinutes)}
+          style={styles.action}
+        />
+        <Button
+          title="Skip this dose"
+          variant="danger"
+          onPress={onSkip}
+          style={styles.action}
+        />
+      </View>
     </View>
   );
 }
@@ -184,60 +199,42 @@ export default function AlarmScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1b5e20',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: colors.alarmBg,
     padding: 24,
+    justifyContent: 'space-between',
   },
-  time: { color: '#fff', fontSize: 64, fontWeight: '300', marginBottom: 16 },
-  subtitle: { color: '#c8e6c9', fontSize: 18 },
-  medName: {
-    color: '#fff',
-    fontSize: 40,
+  top: { alignItems: 'center', paddingTop: 24 },
+  eyebrow: {
+    fontSize: 12,
+    color: colors.alarmMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
     fontWeight: '700',
-    marginVertical: 12,
+  },
+  time: {
+    fontSize: 52,
+    fontWeight: '800',
+    color: colors.alarmAccent,
+    marginTop: 6,
+  },
+  middle: { flex: 1, justifyContent: 'center' },
+  medCard: {
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+  },
+  medName: {
+    fontSize: 30,
+    fontWeight: '800',
+    color: colors.white,
     textAlign: 'center',
   },
-  question: {
-    color: '#c8e6c9',
-    fontSize: 18,
-    marginTop: 24,
-    marginBottom: 32,
-  },
-  takenBtn: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 22,
-    paddingHorizontal: 40,
-    borderRadius: 16,
-    alignItems: 'center',
-    alignSelf: 'stretch',
-    marginBottom: 16,
-  },
-  takenBtnText: { color: '#fff', fontSize: 26, fontWeight: '800' },
-  rescheduleRow: {
-    flexDirection: 'row',
-    alignSelf: 'stretch',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  rescheduleBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.5)',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginHorizontal: 6,
-  },
-  rescheduleText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  skipBtn: {
-    backgroundColor: '#e53935',
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: 12,
-    alignItems: 'center',
-    alignSelf: 'stretch',
-  },
-  skipText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  medMeta: { fontSize: 13.5, color: colors.alarmBody, textAlign: 'center' },
+  actions: { gap: 10, paddingBottom: 12 },
+  action: { width: '100%' },
 });

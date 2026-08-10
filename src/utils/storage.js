@@ -12,6 +12,7 @@ const KEYS = {
   PUSH_TOKEN: '@pr_push_token',
   MEDS_CACHE: '@pr_meds_cache',   // offline cache of medicines (for alarms)
   NOTIF_IDS: '@pr_notif_ids',     // { [medId]: [notificationId,...] } device-local
+  IMPORTED: '@pr_legacy_imported', // per-account 'we already did the one-time import'
 };
 
 // ---------------------------------------------------------------------------
@@ -20,22 +21,29 @@ const KEYS = {
 // ---------------------------------------------------------------------------
 const session = { uid: null, username: null };
 
-function synthEmail(username) {
+export function synthEmail(username) {
   return `${String(username).trim().toLowerCase()}@pillreminder.app`;
 }
 
-function validUsername(username) {
+export function validUsername(username) {
+  // Guard the type first: String(null) is 'null' and String(undefined) is
+  // 'undefined', and both match the pattern below.
+  if (typeof username !== 'string' && typeof username !== 'number') return false;
   return /^[a-zA-Z0-9_.]{3,30}$/.test(String(username).trim());
 }
 
-export async function registerUser(username, password) {
+// `isGuardian` is written into auth metadata, which the handle_new_user trigger
+// copies onto profiles.is_guardian. That flag is what decides which flow the
+// account lands in on every future launch — without it the role choice made at
+// sign-up is lost the moment the app restarts.
+export async function registerUser(username, password, { isGuardian = false } = {}) {
   const u = String(username).trim();
   if (!validUsername(u))
     return { ok: false, error: '3-30 chars: letters, numbers, _ or . only' };
   const { error } = await supabase.auth.signUp({
     email: synthEmail(u),
     password,
-    options: { data: { username: u, is_guardian: false } },
+    options: { data: { username: u, is_guardian: !!isGuardian } },
   });
   if (error) {
     const msg = /already|exists|registered/i.test(error.message)
@@ -104,7 +112,7 @@ async function setNotifIds(medId, ids) {
 // ---------------------------------------------------------------------------
 // Medicines (Supabase + offline cache)
 // ---------------------------------------------------------------------------
-function rowToMed(r, notifMap = {}) {
+export function rowToMed(r, notifMap = {}) {
   return {
     id: r.id,
     name: r.name,
@@ -116,12 +124,13 @@ function rowToMed(r, notifMap = {}) {
     daysOfWeek: r.days_of_week || [],
     toneId: r.tone_id,
     alertGuardian: r.alert_guardian,
+    photo: r.photo || null,
     notificationIds: notifMap[r.id] || [],
     createdAt: r.created_at,
   };
 }
 
-function medToRow(med, uid) {
+export function medToRow(med, uid) {
   const row = {
     user_id: uid,
     name: med.name,
@@ -133,6 +142,7 @@ function medToRow(med, uid) {
     days_of_week: med.daysOfWeek || [0, 1, 2, 3, 4, 5, 6],
     tone_id: med.toneId || 'classic',
     alert_guardian: med.alertGuardian !== false,
+    photo: med.photo || null,   // small base64 JPEG — see utils/photo.js
   };
   // Only include id if it's a real DB uuid (edits); new meds let DB generate it.
   if (med.id && /^[0-9a-f-]{36}$/i.test(med.id)) row.id = med.id;
@@ -148,6 +158,8 @@ export async function getMedicines() {
       .select('*')
       .eq('user_id', uid)
       .order('created_at', { ascending: true });
+    // NOTE: photos ride along here on purpose — the alarm screen reads them
+    // from the offline cache. See getMedicineSummaries() for list views.
     if (error) throw error;
     const notifMap = await getNotifMap();
     const meds = (data || []).map((r) => rowToMed(r, notifMap));
@@ -202,6 +214,7 @@ export async function updateMedicine(user, id, patch) {
   if (patch.daysOfWeek !== undefined) row.days_of_week = patch.daysOfWeek;
   if (patch.toneId !== undefined) row.tone_id = patch.toneId;
   if (patch.alertGuardian !== undefined) row.alert_guardian = patch.alertGuardian;
+  if (patch.photo !== undefined) row.photo = patch.photo;
   if (Object.keys(row).length === 0) return;
   await supabase.from('medicines').update(row).eq('id', id).eq('user_id', uid);
 }
@@ -217,8 +230,18 @@ export async function importLocalMedicinesOnce() {
   try {
     const uid = await currentUid();
     if (!uid) return 0;
+
+    // Once per account per device. The old guard was "the cloud is empty",
+    // which re-imported the legacy list every time a user deleted all of their
+    // medicines.
+    const doneKey = `${KEYS.IMPORTED}_${uid}`;
+    if (await AsyncStorage.getItem(doneKey)) return 0;
+
     const existing = await getMedicines();
-    if (existing.length > 0) return 0; // cloud already has data — don't duplicate
+    if (existing.length > 0) {
+      await AsyncStorage.setItem(doneKey, '1');
+      return 0; // cloud already has data — don't duplicate
+    }
     const keys = await AsyncStorage.getAllKeys();
     const medKeys = keys.filter(
       (k) => k.startsWith('@pr_meds_') && k !== KEYS.MEDS_CACHE
@@ -234,6 +257,7 @@ export async function importLocalMedicinesOnce() {
         } catch (e) {}
       }
     }
+    await AsyncStorage.setItem(doneKey, '1');
     return imported;
   } catch (e) {
     return 0;
@@ -243,57 +267,100 @@ export async function importLocalMedicinesOnce() {
 // ---------------------------------------------------------------------------
 // Dose history (Supabase)
 // ---------------------------------------------------------------------------
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+// The LOCAL calendar date. Deliberately not toISOString(), which is UTC: every
+// other piece of dose logic works in local time, and in a half-hour-offset zone
+// like IST the two disagree for five and a half hours every night — long enough
+// to file an early-morning dose under yesterday and to report a dose taken last
+// evening as "taken today".
+export function todayKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
-export async function recordDose(user, medicineId, status) {
+// A dose is identified by (day, medicine, slot) where slot is the scheduled
+// "HH:MM" it belongs to. Without the slot, a twice-daily medicine taken in the
+// morning counts as taken all day: the evening dose shows as already done and a
+// missed morning dose can never be reported.
+export async function recordDose(user, medicineId, status, slot = null) {
   const uid = await currentUid();
   if (!uid) return;
   await supabase.from('dose_history').insert({
     user_id: uid,
     medicine_id: medicineId,
     day: todayKey(),
+    slot,
     status,
     at: new Date().toISOString(),
   });
 }
 
-export async function getDoseEntries(user, medicineId, dateKey) {
+// All of a medicine's entries for a day. Pass `slot` to narrow to one dose.
+export async function getDoseEntries(user, medicineId, dateKey, slot) {
   const uid = await currentUid();
   if (!uid) return [];
   const day = dateKey || todayKey();
-  const { data, error } = await supabase
+  let q = supabase
     .from('dose_history')
-    .select('status, at')
+    .select('status, at, slot')
     .eq('user_id', uid)
     .eq('medicine_id', medicineId)
-    .eq('day', day)
-    .order('at', { ascending: true });
+    .eq('day', day);
+  if (slot !== undefined && slot !== null) q = q.eq('slot', slot);
+  const { data, error } = await q.order('at', { ascending: true });
   if (error) return [];
   return data || [];
 }
 
-export async function isTakenToday(user, medicineId) {
-  const entries = await getDoseEntries(user, medicineId);
+// Every entry for the whole day, grouped by medicine id. One query instead of
+// one per medicine, which is what the Home screen needs.
+export async function getDoseEntriesForDay(user, dateKey) {
+  const uid = await currentUid();
+  if (!uid) return {};
+  const day = dateKey || todayKey();
+  const { data, error } = await supabase
+    .from('dose_history')
+    .select('medicine_id, status, at, slot')
+    .eq('user_id', uid)
+    .eq('day', day)
+    .order('at', { ascending: true });
+  if (error) return {};
+  const byMedicine = {};
+  for (const row of data || []) {
+    if (!byMedicine[row.medicine_id]) byMedicine[row.medicine_id] = [];
+    byMedicine[row.medicine_id].push(row);
+  }
+  return byMedicine;
+}
+
+export function entriesForSlot(entries, slot) {
+  if (slot === undefined || slot === null) return entries;
+  return (entries || []).filter((e) => e.slot === slot);
+}
+
+export async function isTakenToday(user, medicineId, slot) {
+  const entries = await getDoseEntries(user, medicineId, null, slot);
   return entries.some((e) => e.status === 'taken');
 }
 
-export async function setTakenToday(user, medicineId, taken) {
+export async function setTakenToday(user, medicineId, taken, slot = null) {
   const uid = await currentUid();
   if (!uid) return;
   const day = todayKey();
   if (taken) {
-    const already = await isTakenToday(user, medicineId);
-    if (!already) await recordDose(user, medicineId, 'taken');
+    const already = await isTakenToday(user, medicineId, slot);
+    if (!already) await recordDose(user, medicineId, 'taken', slot);
   } else {
-    await supabase
+    let q = supabase
       .from('dose_history')
       .delete()
       .eq('user_id', uid)
       .eq('medicine_id', medicineId)
       .eq('day', day)
       .eq('status', 'taken');
+    if (slot !== null) q = q.eq('slot', slot);
+    await q;
   }
 }
 
@@ -305,7 +372,7 @@ export async function pruneOldHistory() {
     if (!uid) return;
     const cutoff = new Date();
     cutoff.setFullYear(cutoff.getFullYear() - 2);
-    const cutoffKey = cutoff.toISOString().slice(0, 10);
+    const cutoffKey = todayKey(cutoff);
     await supabase
       .from('dose_history')
       .delete()
@@ -320,14 +387,14 @@ export async function getHistory(user) {
   if (!uid) return {};
   const { data, error } = await supabase
     .from('dose_history')
-    .select('medicine_id, day, status, at')
+    .select('medicine_id, day, status, at, slot')
     .eq('user_id', uid);
   if (error) return {};
   const hist = {};
   for (const r of data || []) {
     if (!hist[r.day]) hist[r.day] = {};
     if (!hist[r.day][r.medicine_id]) hist[r.day][r.medicine_id] = [];
-    hist[r.day][r.medicine_id].push({ status: r.status, at: r.at });
+    hist[r.day][r.medicine_id].push({ status: r.status, at: r.at, slot: r.slot });
   }
   return hist;
 }

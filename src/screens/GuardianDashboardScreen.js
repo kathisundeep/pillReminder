@@ -1,19 +1,27 @@
 import React, { useCallback, useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getSession, logoutUser } from '../utils/storage';
+import { clearStoredRole, useRole } from '../utils/role';
 import { getLinkedUsers, pairWithCode } from '../utils/guardianCloud';
+import {
+  Screen,
+  Content,
+  ProfileHeader,
+  IconButton,
+  Card,
+  CardTitle,
+  CardSubtitle,
+  Button,
+  Field,
+  Input,
+  Avatar,
+  EmptyState,
+} from '../components/ui';
+import { colors, radius, shadow } from '../theme';
 
 export default function GuardianDashboardScreen({ navigation }) {
+  const { setRole } = useRole();
   const [me, setMe] = useState(null);
   const [users, setUsers] = useState([]);
   const [uname, setUname] = useState('');
@@ -52,155 +60,136 @@ export default function GuardianDashboardScreen({ navigation }) {
 
   const onLogout = async () => {
     await logoutUser();
-    navigation.replace('Login');
+    await clearStoredRole();
+    setRole(null); // swaps the navigator back to the Login flow
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.hello}>Guardian</Text>
-          <Text style={styles.user}>{me || ''}</Text>
-        </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <TouchableOpacity
-            style={styles.switchBtn}
-            onPress={() => navigation.replace('Home')}
-          >
-            <Text style={styles.switchText}>My medicines</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onLogout}>
-            <Text style={styles.logout}>Log out</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+    <Screen>
+      <ProfileHeader
+        name={me || ''}
+        subtitle="Guardian Dashboard"
+        role="guardian"
+        right={
+          <IconButton label="🚪" accessibilityLabel="Log out" onPress={onLogout} />
+        }
+      />
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Link a person</Text>
-          <Text style={styles.sub}>
+      <Content>
+        <Card>
+          <CardTitle>Link a person</CardTitle>
+          <CardSubtitle>
             Ask them to open PillReminder → ♥ Guardian → "Generate pairing code",
             then enter their username and the 6-digit code here.
-          </Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Their username"
-            autoCapitalize="none"
-            value={uname}
-            onChangeText={setUname}
-          />
-          <TextInput
-            style={[styles.input, styles.codeInput]}
-            placeholder="6-digit code"
-            keyboardType="number-pad"
-            maxLength={6}
-            value={code}
-            onChangeText={setCode}
-          />
-          <TouchableOpacity
-            style={[styles.primaryBtn, busy && { opacity: 0.6 }]}
+          </CardSubtitle>
+          <Field>
+            <Input
+              placeholder="Their username"
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={uname}
+              onChangeText={setUname}
+            />
+          </Field>
+          <Field>
+            <Input
+              placeholder="6-digit code"
+              keyboardType="number-pad"
+              maxLength={6}
+              value={code}
+              onChangeText={setCode}
+              style={styles.codeInput}
+            />
+          </Field>
+          <Button
+            title={busy ? 'Linking…' : 'Link'}
             onPress={onPair}
             disabled={busy}
-          >
-            <Text style={styles.primaryBtnText}>{busy ? 'Linking…' : 'Link'}</Text>
-          </TouchableOpacity>
-        </View>
+            role="guardian"
+          />
+        </Card>
 
         <Text style={styles.listLabel}>People you look after</Text>
+
         {loading ? (
-          <ActivityIndicator color="#4CAF50" style={{ marginTop: 20 }} />
+          <ActivityIndicator color={colors.teal600} style={{ marginTop: 20 }} />
         ) : users.length === 0 ? (
-          <Text style={styles.empty}>No one linked yet.</Text>
+          <EmptyState
+            icon="🤝"
+            title="No one linked yet"
+            body="Link a person above to start looking after them."
+          />
         ) : (
           users.map((u) => (
-            <TouchableOpacity
-              key={u.userId}
-              style={styles.userRow}
-              onPress={() =>
-                navigation.navigate('GuardianUser', {
-                  userId: u.userId,
-                  username: u.username,
-                })
-              }
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={styles.userName}>{u.name || u.username}</Text>
-                <Text style={styles.userSub}>@{u.username}</Text>
+            <View key={u.userId} style={styles.userCard}>
+              <View style={styles.userHead}>
+                <Avatar name={u.name || u.username} role="guardian" size={40} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.userName}>{u.name || u.username}</Text>
+                  <Text style={styles.userSub}>@{u.username} · Active link</Text>
+                </View>
               </View>
-              <Text style={styles.chevron}>›</Text>
-            </TouchableOpacity>
+
+              <View style={styles.userActions}>
+                <Button
+                  title="📋  View medicines"
+                  variant="neutral"
+                  onPress={() =>
+                    navigation.navigate('GuardianUser', {
+                      userId: u.userId,
+                      username: u.username,
+                    })
+                  }
+                />
+                <Button
+                  title="📊  View health report"
+                  variant="neutral"
+                  onPress={() =>
+                    navigation.navigate('HealthReport', {
+                      userId: u.userId,
+                      username: u.username,
+                    })
+                  }
+                />
+                <Button
+                  title="➕  Propose a medicine"
+                  role="guardian"
+                  onPress={() =>
+                    navigation.navigate('AddMedicine', {
+                      requestUserId: u.userId,
+                      requestUsername: u.username,
+                    })
+                  }
+                />
+              </View>
+            </View>
           ))
         )}
-      </ScrollView>
-    </View>
+      </Content>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f6f8f6' },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    padding: 20,
-    paddingTop: 24,
-    backgroundColor: '#00796b',
-  },
-  hello: { color: '#b2dfdb', fontSize: 14 },
-  user: { color: '#fff', fontSize: 22, fontWeight: '700' },
-  switchBtn: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    marginBottom: 8,
-  },
-  switchText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  logout: { color: '#fff', textDecorationLine: 'underline' },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    elevation: 1,
-  },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 6 },
-  sub: { fontSize: 13, color: '#777', lineHeight: 18, marginBottom: 10 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 10,
-  },
-  codeInput: { letterSpacing: 4, fontWeight: '700' },
-  primaryBtn: {
-    backgroundColor: '#00796b',
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  codeInput: { letterSpacing: 6, fontWeight: '800', textAlign: 'center' },
   listLabel: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#888',
+    fontWeight: '800',
+    color: colors.muted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: 8,
   },
-  empty: { color: '#888', marginTop: 8 },
-  userRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 8,
-    elevation: 1,
+  userCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 18,
+    gap: 14,
+    ...shadow.soft,
   },
-  userName: { fontSize: 16, fontWeight: '700', color: '#222' },
-  userSub: { fontSize: 13, color: '#888', marginTop: 2 },
-  chevron: { fontSize: 26, color: '#bbb' },
+  userHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  userName: { fontSize: 16, fontWeight: '800', color: colors.heading },
+  userSub: { fontSize: 12.5, color: colors.muted, marginTop: 2 },
+  userActions: { gap: 8 },
 });

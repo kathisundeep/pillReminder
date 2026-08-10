@@ -13,3 +13,6 @@ android/
 ios/
 .DS_Store
 **/.DS_Store
+
+# Test coverage output
+coverage/

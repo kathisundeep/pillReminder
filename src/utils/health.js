@@ -30,7 +30,11 @@ export const READING_TYPES = [
       { key: 'hdl', label: 'HDL' },
       { key: 'ldl', label: 'LDL' },
     ],
-    format: (v) => `Total ${v.total}${v.hdl ? ` · HDL ${v.hdl}` : ''}${v.ldl ? ` · LDL ${v.ldl}` : ''}`,
+    // Check for presence, not truthiness: a recorded HDL/LDL of 0 is data.
+    format: (v) =>
+      `Total ${v.total}` +
+      (v.hdl != null ? ` · HDL ${v.hdl}` : '') +
+      (v.ldl != null ? ` · LDL ${v.ldl}` : ''),
   },
   {
     id: 'weight',
@@ -52,7 +56,7 @@ export async function addReading(type, values, note) {
   const { error } = await supabase.from('health_readings').insert({
     user_id: u.user.id,
     type,
-    values,
+    reading_values: values,
     unit: t.unit,
     note: note || null,
     measured_at: new Date().toISOString(),
@@ -60,23 +64,13 @@ export async function addReading(type, values, note) {
   if (error) throw error;
 }
 
-// Recent readings for the signed-in user (optionally filtered by type).
-export async function getReadings(type, limit = 60) {
-  const { data: u } = await supabase.auth.getUser();
-  if (!u?.user) return [];
-  let q = supabase
-    .from('health_readings')
-    .select('*')
-    .eq('user_id', u.user.id)
-    .order('measured_at', { ascending: false })
-    .limit(limit);
-  if (type) q = q.eq('type', type);
-  const { data } = await q;
-  return data || [];
+// Normalise the row shape for callers: the column is reading_values in the
+// database (`values` is a reserved SQL keyword), `values` in the app.
+function rowToReading(r) {
+  return { ...r, values: r.reading_values ?? r.values ?? {} };
 }
 
-// Readings for a linked user (guardian view — RLS allows the read).
-export async function getUserReadings(userId, type, limit = 60) {
+async function fetchReadings(userId, type, limit) {
   let q = supabase
     .from('health_readings')
     .select('*')
@@ -85,7 +79,34 @@ export async function getUserReadings(userId, type, limit = 60) {
     .limit(limit);
   if (type) q = q.eq('type', type);
   const { data } = await q;
-  return data || [];
+  return (data || []).map(rowToReading);
+}
+
+// Recent readings, `limit` PER TYPE rather than across all of them. A single
+// shared cap meant someone logging weight daily pushed their blood-pressure
+// history out of the report entirely, with no indication anything was missing.
+async function readingsFor(userId, type, limit) {
+  if (!userId) return [];
+  if (type) return fetchReadings(userId, type, limit);
+
+  const perType = await Promise.all(
+    READING_TYPES.map((t) => fetchReadings(userId, t.id, limit))
+  );
+  return perType
+    .flat()
+    .sort((a, b) => new Date(b.measured_at) - new Date(a.measured_at));
+}
+
+// Recent readings for the signed-in user (optionally filtered by type).
+export async function getReadings(type, limit = 60) {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u?.user) return [];
+  return readingsFor(u.user.id, type, limit);
+}
+
+// Readings for a linked user (guardian view — RLS allows the read).
+export async function getUserReadings(userId, type, limit = 60) {
+  return readingsFor(userId, type, limit);
 }
 
 export async function deleteReading(id) {

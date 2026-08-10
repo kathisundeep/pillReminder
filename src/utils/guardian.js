@@ -4,11 +4,13 @@ import * as TaskManager from 'expo-task-manager';
 import * as BackgroundFetch from 'expo-background-fetch';
 import Constants from 'expo-constants';
 
+import { supabase } from './supabase';
+
 import {
   getSession,
   getMedicines,
   getDoseEntries,
-  isTakenToday,
+  entriesForSlot,
   recordDose,
   hasAlertedGuardian,
   markAlertedGuardian,
@@ -19,29 +21,14 @@ import {
   getMyProfile,
   saveMyPushToken,
 } from './guardianCloud';
+import {
+  formatClock,
+  passedSlots,
+  computeDoseDeadline,
+} from './doseState';
 
 export const SWEEP_TASK = 'guardian-missed-dose-sweep';
 const EXPO_PUSH_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
-
-function pad(n) {
-  return String(n).padStart(2, '0');
-}
-
-function formatTime(date) {
-  const h = date.getHours();
-  const m = date.getMinutes();
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const hh = h % 12 === 0 ? 12 : h % 12;
-  return `${hh}:${pad(m)} ${ampm}`;
-}
-
-// Build a Date for today at "HH:MM" in local time.
-function doseDateToday(hhmm) {
-  const [h, m] = String(hhmm).split(':').map(Number);
-  const d = new Date();
-  d.setHours(h, m, 0, 0);
-  return d;
-}
 
 // Register this device for Expo push so it can act as a guardian.
 // Returns the ExponentPushToken[...] string, or null if unavailable.
@@ -76,8 +63,26 @@ export async function registerForPushTokenAsync() {
   }
 }
 
-// Send a push to a guardian's Expo token. Returns true on accepted delivery.
-export async function sendGuardianPush(pushToken, { title, body, data } = {}) {
+// What the patient has chosen to send their guardian.
+//   'missed' — only late/skipped doses (default)
+//   'intake' — only doses actually taken
+//   'both'   — everything
+export const NOTIFY_MODES = [
+  { id: 'missed', label: 'When I miss a dose' },
+  { id: 'intake', label: 'When I take a dose' },
+  { id: 'both', label: 'Both' },
+];
+
+export function notifyModeOf(profile) {
+  const mode = profile?.settings?.notifyMode;
+  return NOTIFY_MODES.some((m) => m.id === mode) ? mode : 'missed';
+}
+
+export const wantsIntakeAlerts = (mode) => mode === 'intake' || mode === 'both';
+export const wantsMissedAlerts = (mode) => mode === 'missed' || mode === 'both';
+
+// Send a push to an Expo token. Returns true on accepted delivery.
+export async function sendPush(pushToken, { title, body, data } = {}) {
   if (!pushToken) return false;
   try {
     const res = await fetch(EXPO_PUSH_ENDPOINT, {
@@ -105,21 +110,47 @@ export async function sendGuardianPush(pushToken, { title, body, data } = {}) {
   }
 }
 
-// When notifyMode is "both", let the guardian know a dose was taken too.
+// Let the guardian know a dose was taken, when the patient asked for that.
 export async function notifyGuardianTaken(user, medicineName) {
   try {
     if (!user) return;
     const profile = await getMyProfile();
-    if ((profile?.settings?.notifyMode || 'missed') !== 'both') return;
+    if (!wantsIntakeAlerts(notifyModeOf(profile))) return;
     const target = await getActiveGuardianTarget();
     if (!target?.token) return;
-    await sendGuardianPush(target.token, {
+    await sendPush(target.token, {
       title: 'Medicine taken',
       body: `${user} just took ${medicineName || 'their medicine'}.`,
       data: { type: 'guardian-taken', medicineName, who: user },
     });
   } catch (e) {
     // best-effort
+  }
+}
+
+// Guardian -> patient. Tell the patient a medicine is waiting for their
+// approval, so they find out before they next happen to open the app.
+//
+// RLS (profiles_select, via is_linked_guardian) lets an active guardian read
+// the patient's profile, which is where the push token lives. Best-effort: the
+// request row is already saved, so a failed push only delays the in-app banner.
+export async function notifyPatientOfRequest(userId, medicineName) {
+  try {
+    if (!userId) return false;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('push_token')
+      .eq('id', userId)
+      .maybeSingle();
+    if (!profile?.push_token) return false;
+
+    return await sendPush(profile.push_token, {
+      title: 'Your guardian added a medicine',
+      body: `${medicineName || 'A medicine'} is waiting for your approval.`,
+      data: { type: 'guardian-request', medicineName },
+    });
+  } catch (e) {
+    return false;
   }
 }
 
@@ -132,79 +163,82 @@ export async function sweepMissedDoses() {
     const user = await getSession();
     if (!user) return;
 
-    // Cloud guardian target (the paired guardian's device) + user settings.
-    const target = await getActiveGuardianTarget();
-    if (!target?.token) return;
     const profile = await getMyProfile();
     const grace = Number(profile?.settings?.graceMinutes) || 30;
+
+    // A guardian is needed to SEND an alert, not to DETECT a missed dose.
+    // Detection runs either way, so a user without a guardian still gets an
+    // accurate adherence history — which is what the health report is built on.
+    const target = await getActiveGuardianTarget();
+    const canPush =
+      !!target?.token && wantsMissedAlerts(notifyModeOf(profile));
+
     const meds = await getMedicines(user);
     const now = new Date();
     const todayDow = now.getDay(); // 0 (Sun) .. 6 (Sat)
 
     for (const med of meds) {
-      if (med.alertGuardian === false) continue;
-
       const days =
         med.daysOfWeek && med.daysOfWeek.length
           ? med.daysOfWeek
           : [0, 1, 2, 3, 4, 5, 6];
       if (!days.includes(todayDow)) continue;
 
-      // Most recent scheduled time today that has already passed.
-      let lastPassed = null;
-      for (const t of med.times || []) {
-        const dt = doseDateToday(t);
-        if (dt <= now && (!lastPassed || dt > lastPassed)) lastPassed = dt;
-      }
-      if (!lastPassed) continue; // nothing due yet today
+      const slots = passedSlots(med, now);
+      if (slots.length === 0) continue; // nothing due yet today
 
-      if (await isTakenToday(user, med.id)) continue; // they took it
+      // The whole day's log for this medicine, fetched once.
+      const dayEntries = await getDoseEntries(user, med.id);
 
-      const entries = await getDoseEntries(user, med.id);
-      const snoozeMin = Number(med.snoozeMinutes) || 10;
-      const latestOf = (status) => {
-        const times = entries
-          .filter((e) => e.status === status)
-          .map((e) => new Date(e.at))
-          .sort((a, b) => a - b);
-        return times.length ? times[times.length - 1] : null;
-      };
-      const lastSkip = latestOf('skipped');
-      const lastSnooze = latestOf('snoozed');
+      // Every dose that has come around today, not just the most recent one.
+      for (const { slot, due } of slots) {
+        const entries = entriesForSlot(dayEntries, slot);
+        if (entries.some((e) => e.status === 'taken')) continue;
 
-      // Deadline precedence: explicit Skip > Snooze re-alarm > the dose time.
-      let deadline;
-      let skipped = false;
-      if (lastSkip) {
-        deadline = new Date(lastSkip.getTime() + grace * 60000);
-        skipped = true;
-      } else if (lastSnooze) {
-        const snoozeFire = new Date(lastSnooze.getTime() + snoozeMin * 60000);
+        // Deadline precedence: explicit Skip > Snooze re-alarm > the dose time.
+        const { deadline, skipped, insideSnoozeWindow } = computeDoseDeadline({
+          lastPassed: due,
+          entries,
+          grace,
+          snoozeMinutes: med.snoozeMinutes,
+          now,
+        });
         // Still inside the snooze window — the re-alarm hasn't fired yet.
-        if (now < snoozeFire) continue;
-        deadline = new Date(snoozeFire.getTime() + grace * 60000);
-      } else {
-        deadline = new Date(lastPassed.getTime() + grace * 60000);
+        if (insideSnoozeWindow) continue;
+        if (now < deadline) continue;
+
+        // Record the miss regardless of whether anyone can be told about it —
+        // but only once. This is deliberately separate from the alert dedup
+        // below: history must not gain duplicate rows, while a failed push
+        // must still be retried on the next sweep.
+        if (!entries.some((e) => e.status === 'missed')) {
+          await recordDose(user, med.id, 'missed', slot);
+        }
+
+        if (!canPush) continue;
+        if (med.alertGuardian === false) continue;
+
+        // Alert at most once per dose per day.
+        const key = `${med.id}:${slot}`;
+        if (await hasAlertedGuardian(user, key)) continue;
+
+        const delivered = await sendPush(target.token, {
+          title: skipped ? 'Skipped medicine alert' : 'Missed medicine alert',
+          body: skipped
+            ? `${user} skipped ${med.name} (due ${formatClock(
+                due
+              )}) and has not taken it. Please check on them.`
+            : `${user} has not taken ${med.name} (due ${formatClock(
+                due
+              )}). Please check on them.`,
+          data: {
+            type: 'guardian-alert', medicineName: med.name, who: user, slot,
+          },
+        });
+        // Only suppress future attempts once the guardian has actually been
+        // reached. Marking on a failed send loses the alert for the whole day.
+        if (delivered) await markAlertedGuardian(user, key);
       }
-      if (now < deadline) continue;
-
-      // Alert at most once per medicine per day.
-      const key = med.id;
-      if (await hasAlertedGuardian(user, key)) continue;
-
-      await sendGuardianPush(target.token, {
-        title: skipped ? 'Skipped medicine alert' : 'Missed medicine alert',
-        body: skipped
-          ? `${user} skipped ${med.name} (due ${formatTime(
-              lastPassed
-            )}) and has not taken it. Please check on them.`
-          : `${user} has not taken ${med.name} (due ${formatTime(
-              lastPassed
-            )}). Please check on them.`,
-        data: { type: 'guardian-alert', medicineName: med.name, who: user },
-      });
-      await markAlertedGuardian(user, key);
-      await recordDose(user, med.id, 'missed');
     }
   } catch (e) {
     // Swallow — this runs in the background and must not crash the task.

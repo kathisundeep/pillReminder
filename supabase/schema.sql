@@ -93,9 +93,19 @@ create table if not exists public.medicines (
   days_of_week   int[] default '{0,1,2,3,4,5,6}',
   tone_id        text default 'classic',
   alert_guardian boolean default true,
+  photo          text,                            -- optional base64 JPEG, ~9 KB
   created_at     timestamptz not null default now()
 );
 create index if not exists medicines_user_idx on public.medicines(user_id);
+
+-- Photo column for databases created before it existed.
+alter table public.medicines add column if not exists photo text;
+-- Hard cap so a client bug can never push a multi-MB image into a row. The app
+-- compresses to ~12 000 base64 chars (see src/utils/photo.js); 60 KB of text
+-- leaves plenty of headroom while still blocking an un-shrunk original.
+alter table public.medicines drop constraint if exists medicines_photo_size;
+alter table public.medicines add constraint medicines_photo_size
+  check (photo is null or char_length(photo) <= 60000);
 
 -- ===========================================================================
 -- dose_history (2-year rolling retention — see cron at bottom)
@@ -105,10 +115,19 @@ create table if not exists public.dose_history (
   user_id     uuid not null references public.profiles(id) on delete cascade,
   medicine_id uuid references public.medicines(id) on delete cascade,
   day         date not null,
+  slot        text,                                -- scheduled 'HH:MM' this dose belongs to
   status      text not null,                       -- taken | snoozed | skipped | missed
   at          timestamptz not null default now()
 );
 create index if not exists dose_history_user_day_idx on public.dose_history(user_id, day);
+
+-- Slot column for databases created before it existed. A dose is identified by
+-- (day, medicine, slot): without it, a morning dose being taken counts as the
+-- whole day taken, so an evening dose shows as done and a missed morning dose
+-- can never be reported.
+alter table public.dose_history add column if not exists slot text;
+create index if not exists dose_history_slot_idx
+  on public.dose_history(user_id, day, medicine_id, slot);
 
 -- ===========================================================================
 -- health_readings (Phase 2 trackers: BP / sugar / cholesterol / weight …)
@@ -263,11 +282,6 @@ create policy payment_methods_owner on public.payment_methods for all
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- ===========================================================================
--- 2-year history retention (Phase 2). Requires pg_cron extension enabled.
--- Uncomment after enabling pg_cron in Dashboard → Database → Extensions.
+-- 2-year history retention + all security hardening: see hardening.sql, which
+-- must be run after this file, pairing.sql and subscriptions.sql.
 -- ===========================================================================
--- select cron.schedule(
---   'prune-dose-history',
---   '0 3 * * *',                                   -- daily at 03:00 UTC
---   $$ delete from public.dose_history where day < (current_date - interval '2 years'); $$
--- );

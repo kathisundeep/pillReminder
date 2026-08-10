@@ -1,24 +1,23 @@
 import React, { useCallback, useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getPendingRequests, setRequestStatus } from '../utils/guardianCloud';
 import { addMedicine } from '../utils/storage';
 import { resyncAlarmsFromCloud } from '../utils/sync';
-
-function formatTime(hhmm) {
-  const [h, m] = hhmm.split(':').map(Number);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const hh = h % 12 === 0 ? 12 : h % 12;
-  return `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
-}
+import { formatTime } from '../utils/doseState';
+import {
+  Screen,
+  Content,
+  TitleHeader,
+  Card,
+  CardTitle,
+  CardSubtitle,
+  Button,
+  ButtonRow,
+  EmptyState,
+} from '../components/ui';
+import MedThumb from '../components/MedThumb';
+import { colors, radius, formFor } from '../theme';
 
 export default function ApprovalsScreen({ navigation }) {
   const [reqs, setReqs] = useState([]);
@@ -59,71 +58,85 @@ export default function ApprovalsScreen({ navigation }) {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color="#4CAF50" />
-      </View>
+      <Screen>
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.emerald600} />
+        </View>
+      </Screen>
     );
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
-    >
-      {reqs.length === 0 ? (
-        <Text style={styles.empty}>No pending requests.</Text>
-      ) : (
-        reqs.map((r) => {
-          const p = r.payload || {};
-          return (
-            <View key={r.id} style={styles.card}>
-              <Text style={styles.title}>Guardian wants to add:</Text>
-              <Text style={styles.med}>
-                {p.name}
-                {p.form ? <Text style={styles.form}>  · {p.form}</Text> : null}
-              </Text>
-              <Text style={styles.times}>
-                {(p.times || []).map(formatTime).join('  •  ')}
-              </Text>
-              <View style={styles.row}>
-                <TouchableOpacity
-                  style={[styles.btn, styles.reject]}
-                  disabled={busyId === r.id}
-                  onPress={() => reject(r)}
-                >
-                  <Text style={styles.rejectText}>Reject</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.btn, styles.approve]}
-                  disabled={busyId === r.id}
-                  onPress={() => approve(r)}
-                >
-                  <Text style={styles.approveText}>
-                    {busyId === r.id ? '…' : 'Approve'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        })
-      )}
-    </ScrollView>
+    <Screen>
+      <TitleHeader
+        title="Guardian requests"
+        onClose={() => navigation.goBack()}
+      />
+      <Content>
+        {reqs.length === 0 ? (
+          <EmptyState
+            icon="📭"
+            title="No pending requests"
+            body="When your guardian proposes a medicine, it will appear here for you to approve."
+          />
+        ) : (
+          reqs.map((r) => {
+            const p = r.payload || {};
+            return (
+              <Card key={r.id}>
+                <CardTitle>Guardian wants to add:</CardTitle>
+                <CardSubtitle>You decide whether this is added to your schedule.</CardSubtitle>
+
+                <View style={styles.medRow}>
+                  <MedThumb med={p} size={56} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.medName}>{p.name}</Text>
+                    <Text style={styles.medMeta}>
+                      {formFor(p.form).label}
+                      {p.snoozeMinutes ? ` • Snooze ${p.snoozeMinutes}m` : ''}
+                    </Text>
+                    <Text style={styles.medTimes}>
+                      {(p.times || []).map(formatTime).join('  •  ')}
+                    </Text>
+                  </View>
+                </View>
+
+                <ButtonRow>
+                  <Button
+                    title="Reject"
+                    variant="neutral"
+                    style={{ flex: 1 }}
+                    disabled={busyId === r.id}
+                    onPress={() => reject(r)}
+                  />
+                  <Button
+                    title={busyId === r.id ? '…' : 'Approve'}
+                    style={{ flex: 1 }}
+                    disabled={busyId === r.id}
+                    onPress={() => approve(r)}
+                  />
+                </ButtonRow>
+              </Card>
+            );
+          })
+        )}
+      </Content>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f6f8f6' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  empty: { color: '#888', textAlign: 'center', marginTop: 40 },
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, elevation: 1 },
-  title: { fontSize: 13, color: '#888' },
-  med: { fontSize: 18, fontWeight: '700', color: '#222', marginTop: 4 },
-  form: { fontSize: 14, fontWeight: '500', color: '#999' },
-  times: { fontSize: 14, color: '#555', marginTop: 4 },
-  row: { flexDirection: 'row', marginTop: 14 },
-  btn: { flex: 1, paddingVertical: 11, borderRadius: 8, alignItems: 'center', marginHorizontal: 4 },
-  approve: { backgroundColor: '#4CAF50' },
-  approveText: { color: '#fff', fontWeight: '700' },
-  reject: { backgroundColor: '#fdecea', borderWidth: 1, borderColor: '#f5c6c0' },
-  rejectText: { color: '#e53935', fontWeight: '700' },
+  medRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: colors.cardSubtle,
+    borderRadius: radius.input,
+    padding: 12,
+    marginBottom: 14,
+  },
+  medName: { fontSize: 16, fontWeight: '800', color: colors.heading },
+  medMeta: { fontSize: 12.5, color: colors.muted, marginTop: 2 },
+  medTimes: { fontSize: 13, color: colors.body, marginTop: 4, fontWeight: '600' },
 });

@@ -1,15 +1,17 @@
 import React, { useCallback, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  ActivityIndicator,
-  TouchableOpacity,
-  Share,
-} from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Share } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { READING_TYPES, typeById, getReadings, getUserReadings } from '../utils/health';
+import { READING_TYPES, getReadings, getUserReadings } from '../utils/health';
+import {
+  Screen,
+  Content,
+  TitleHeader,
+  Card,
+  Button,
+  EmptyState,
+  Pill,
+} from '../components/ui';
+import { colors } from '../theme';
 
 function stats(readings, key) {
   const nums = readings
@@ -66,64 +68,74 @@ export default function HealthReportScreen({ route, navigation }) {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color="#4CAF50" />
-      </View>
+      <Screen>
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.emerald600} />
+        </View>
+      </Screen>
     );
   }
 
   const anything = Object.keys(byType).length > 0;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-      {!anything ? (
-        <Text style={styles.empty}>No health readings recorded yet.</Text>
-      ) : (
-        <>
-          {READING_TYPES.map((t) => {
-            const list = byType[t.id];
-            if (!list || list.length === 0) return null;
-            return (
-              <View key={t.id} style={styles.card}>
-                <Text style={styles.type}>{t.label}</Text>
-                <Text style={styles.latest}>
-                  Latest: {t.format(list[0].values)} {t.unit}
-                </Text>
-                {t.fields.map((f) => {
-                  const s = stats(list, f.key);
-                  if (!s) return null;
-                  return (
-                    <Text key={f.key} style={styles.stat}>
-                      {f.label}: avg {s.avg} · min {s.min} · max {s.max} ({s.count})
-                    </Text>
-                  );
-                })}
-              </View>
-            );
-          })}
-          <TouchableOpacity style={styles.shareBtn} onPress={share}>
-            <Text style={styles.shareText}>Share report</Text>
-          </TouchableOpacity>
-        </>
-      )}
-    </ScrollView>
+    <Screen>
+      <TitleHeader
+        title={username ? `@${username}'s report` : 'Health report'}
+        onClose={() => navigation.goBack()}
+      />
+      <Content>
+        {!anything ? (
+          <EmptyState
+            icon="📈"
+            title="No health readings yet"
+            body="Record a reading in Trackers and the summary will build up here."
+          />
+        ) : (
+          <>
+            {READING_TYPES.map((t) => {
+              const list = byType[t.id];
+              if (!list || list.length === 0) return null;
+              return (
+                <Card key={t.id}>
+                  <View style={styles.cardHead}>
+                    <Text style={styles.type}>{t.label}</Text>
+                    <Pill bg={colors.cardSubtle} color={colors.muted}>
+                      {list.length} reading{list.length > 1 ? 's' : ''}
+                    </Pill>
+                  </View>
+                  <Text style={styles.latest}>
+                    Latest: {t.format(list[0].values)} {t.unit}
+                  </Text>
+                  {t.fields.map((f) => {
+                    const s = stats(list, f.key);
+                    if (!s) return null;
+                    return (
+                      <Text key={f.key} style={styles.stat}>
+                        {f.label}: avg {s.avg} · min {s.min} · max {s.max} ({s.count})
+                      </Text>
+                    );
+                  })}
+                </Card>
+              );
+            })}
+            <Button title="Share report" onPress={share} />
+          </>
+        )}
+      </Content>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f6f8f6' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  empty: { color: '#888', textAlign: 'center', marginTop: 40 },
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, elevation: 1 },
-  type: { fontSize: 16, fontWeight: '700', color: '#222' },
-  latest: { fontSize: 15, color: '#2e7d32', fontWeight: '600', marginTop: 4 },
-  stat: { fontSize: 13, color: '#666', marginTop: 4 },
-  shareBtn: {
-    backgroundColor: '#4CAF50',
-    padding: 14,
-    borderRadius: 8,
+  cardHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 8,
+    marginBottom: 6,
   },
-  shareText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  type: { fontSize: 16, fontWeight: '800', color: colors.heading },
+  latest: { fontSize: 16, color: colors.emerald700, fontWeight: '800', marginTop: 2 },
+  stat: { fontSize: 13, color: colors.muted, marginTop: 6 },
 });

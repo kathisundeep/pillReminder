@@ -1,0 +1,172 @@
+[
+  {
+    "file": "01-login-patient.png",
+    "screen": "Login",
+    "caption": "Login — \"I take medicines\""
+  },
+  {
+    "file": "02-login-register.png",
+    "screen": "Login",
+    "caption": "Register a new account"
+  },
+  {
+    "file": "03-login-guardian.png",
+    "screen": "Login",
+    "caption": "Guardian log in"
+  },
+  {
+    "file": "04-home-empty.png",
+    "screen": "Home",
+    "caption": "Home — no medicines yet"
+  },
+  {
+    "file": "05-add-medicine-blank.png",
+    "screen": "AddMedicine",
+    "caption": "Add medicine — names, type, colour"
+  },
+  {
+    "file": "06-add-medicine-blank-lower.png",
+    "screen": "AddMedicine",
+    "caption": "Add medicine — times, frequency, tone"
+  },
+  {
+    "file": "07-add-medicine-tone-snooze.png",
+    "screen": "AddMedicine",
+    "caption": "Add medicine — snooze, guardian alert, save"
+  },
+  {
+    "file": "08-add-medicine-time-picker.png",
+    "screen": "AddMedicine",
+    "caption": "Custom time wheel picker"
+  },
+  {
+    "file": "09-add-medicine-filled.png",
+    "screen": "AddMedicine",
+    "caption": "Add medicine — filled in (two medicines, one schedule)"
+  },
+  {
+    "file": "10-add-medicine-filled-lower.png",
+    "screen": "AddMedicine",
+    "caption": "Add medicine — schedule, days and tone chosen"
+  },
+  {
+    "file": "11-home-today.png",
+    "screen": "Home",
+    "caption": "Home — today's doses (taken / due now / upcoming)"
+  },
+  {
+    "file": "12-home-other-days.png",
+    "screen": "Home",
+    "caption": "Home — scrolled to \"Other days\""
+  },
+  {
+    "file": "13-home-guardian-request.png",
+    "screen": "Home",
+    "caption": "Home — guardian requests waiting for approval"
+  },
+  {
+    "file": "14-alarm.png",
+    "screen": "Alarm",
+    "caption": "Alarm — taken / reschedule / skip"
+  },
+  {
+    "file": "15-edit-medicine.png",
+    "screen": "AddMedicine",
+    "caption": "Edit medicine"
+  },
+  {
+    "file": "16-edit-medicine-delete.png",
+    "screen": "AddMedicine",
+    "caption": "Edit medicine — save / delete"
+  },
+  {
+    "file": "17-guardian-setup.png",
+    "screen": "Guardian",
+    "caption": "Guardian — none linked yet"
+  },
+  {
+    "file": "18-guardian-pairing-code.png",
+    "screen": "Guardian",
+    "caption": "Guardian — pairing code generated"
+  },
+  {
+    "file": "19-guardian-alert-settings.png",
+    "screen": "Guardian",
+    "caption": "Guardian — alert grace period and toggles"
+  },
+  {
+    "file": "20-guardian-linked.png",
+    "screen": "Guardian",
+    "caption": "Guardian — linked guardian"
+  },
+  {
+    "file": "21-approvals.png",
+    "screen": "Approvals",
+    "caption": "Guardian requests — approve or reject"
+  },
+  {
+    "file": "22-approvals-empty.png",
+    "screen": "Approvals",
+    "caption": "Guardian requests — none pending"
+  },
+  {
+    "file": "23-trackers.png",
+    "screen": "Trackers",
+    "caption": "Health trackers — blood pressure"
+  },
+  {
+    "file": "24-trackers-cholesterol.png",
+    "screen": "Trackers",
+    "caption": "Health trackers — cholesterol (multi-field)"
+  },
+  {
+    "file": "25-trackers-history.png",
+    "screen": "Trackers",
+    "caption": "Health trackers — recent readings"
+  },
+  {
+    "file": "26-health-report.png",
+    "screen": "HealthReport",
+    "caption": "Health report — stats per reading type"
+  },
+  {
+    "file": "27-plans.png",
+    "screen": "Plans",
+    "caption": "Plans & subscription"
+  },
+  {
+    "file": "28-guardian-dashboard-empty.png",
+    "screen": "GuardianDashboard",
+    "caption": "Guardian dashboard — link a person"
+  },
+  {
+    "file": "29-guardian-dashboard-linked.png",
+    "screen": "GuardianDashboard",
+    "caption": "Guardian dashboard — people you look after"
+  },
+  {
+    "file": "30-guardian-user-medicines.png",
+    "screen": "GuardianUser",
+    "caption": "Guardian — a linked person's medicines"
+  },
+  {
+    "file": "31-guardian-request-medicine.png",
+    "screen": "AddMedicine",
+    "caption": "Guardian — request to add a medicine (needs approval)"
+  },
+  {
+    "file": "32-guardian-health-report.png",
+    "screen": "HealthReport",
+    "caption": "Guardian — a linked person's health report"
+  },
+  {
+    "file": "33-guardian-dashboard-logout.png",
+    "screen": "GuardianDashboard",
+    "caption": "Guardian dashboard — \"Log out\""
+  },
+  {
+    "file": "34-logged-out.png",
+    "screen": "Login",
+    "caption": "After log out — back to the login screen"
+  }
+]

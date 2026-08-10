@@ -1,16 +1,17 @@
 import React, { useCallback, useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getPlans, getMyPlan, activatePlanMock } from '../utils/subscription';
+import { getPlans, getMyPlan, requestPlanChange } from '../utils/subscription';
 import { startCheckout } from '../utils/payments';
+import {
+  Screen,
+  Content,
+  TitleHeader,
+  Card,
+  Button,
+  Pill,
+} from '../components/ui';
+import { colors } from '../theme';
 
 function price(p) {
   if (!p.price_cents) return 'Free';
@@ -19,7 +20,7 @@ function price(p) {
   return `${sym}${amt}/${p.interval}`;
 }
 
-export default function PlansScreen() {
+export default function PlansScreen({ navigation }) {
   const [plans, setPlans] = useState([]);
   const [current, setCurrent] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -41,20 +42,30 @@ export default function PlansScreen() {
     if (current?.id === plan.id) return;
     setBusyId(plan.id);
     try {
-      let charged = false;
+      // A paid plan requires a completed payment. Checkout is still a stub, so
+      // it always reports failure — and we must stop there. Activating anyway
+      // was how a user could hand themselves the top tier for free.
       if (plan.price_cents > 0) {
-        // Phase 4 stub — falls through to mock activation for now.
         const res = await startCheckout({ planId: plan.id, country: 'IN' });
-        charged = res.ok;
+        if (!res.ok) {
+          Alert.alert(
+            'Payment not available yet',
+            res.message ||
+              `${plan.name} needs a payment before it can be activated. Online payment is not enabled yet.`
+          );
+          return;
+        }
       }
-      await activatePlanMock(plan.id);
+
+      // Free is a downgrade, not a grant, but it still goes through the server
+      // so any recurring mandate is cancelled with it.
+      const res = await requestPlanChange(plan.id);
+      if (!res.ok) {
+        Alert.alert('Could not change plan', res.error);
+        return;
+      }
       await load();
-      Alert.alert(
-        charged ? 'Subscribed' : 'Activated (test mode)',
-        charged
-          ? `You're now on ${plan.name}.`
-          : `${plan.name} is active. Online payment isn't enabled yet — no charge was made.`
-      );
+      Alert.alert('Plan updated', `You're now on ${plan.name}.`);
     } catch (e) {
       Alert.alert('Could not change plan', String(e?.message || e));
     } finally {
@@ -64,73 +75,86 @@ export default function PlansScreen() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color="#4CAF50" />
-      </View>
+      <Screen>
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.emerald600} />
+        </View>
+      </Screen>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-      <Text style={styles.current}>
-        Current plan: <Text style={styles.currentName}>{current?.name || 'Free'}</Text>
-        {'  '}· up to {current?.max_guardians || 1} guardian
-        {(current?.max_guardians || 1) > 1 ? 's' : ''}
-      </Text>
+    <Screen>
+      <TitleHeader title="Plans & subscription" onClose={() => navigation.goBack()} />
+      <Content>
+        <View style={styles.currentRow}>
+          <Text style={styles.currentLabel}>Current plan</Text>
+          <Pill bg={colors.emerald50} color={colors.emerald700}>
+            {current?.name || 'Free'} · up to {current?.max_guardians || 1} guardian
+            {(current?.max_guardians || 1) > 1 ? 's' : ''}
+          </Pill>
+        </View>
 
-      {plans.map((p) => {
-        const isCurrent = current?.id === p.id;
-        return (
-          <View key={p.id} style={[styles.card, isCurrent && styles.cardCurrent]}>
-            <View style={styles.cardHead}>
-              <Text style={styles.name}>{p.name}</Text>
-              <Text style={styles.price}>{price(p)}</Text>
-            </View>
-            <Text style={styles.feat}>
-              • Up to {p.max_guardians} guardian{p.max_guardians > 1 ? 's' : ''}
-            </Text>
-            <Text style={styles.feat}>• Health trackers & report</Text>
-            <Text style={styles.feat}>• 2-year medicine history</Text>
-            <TouchableOpacity
-              style={[
-                styles.btn,
-                isCurrent ? styles.btnCurrent : styles.btnChoose,
-                busyId === p.id && { opacity: 0.6 },
-              ]}
-              disabled={isCurrent || busyId === p.id}
-              onPress={() => choose(p)}
-            >
-              <Text style={[styles.btnText, isCurrent && styles.btnTextCurrent]}>
-                {isCurrent ? 'Current plan' : busyId === p.id ? '…' : p.price_cents ? 'Subscribe' : 'Switch to Free'}
+        {plans.map((p) => {
+          const isCurrent = current?.id === p.id;
+          return (
+            <Card key={p.id} highlighted={isCurrent}>
+              <View style={styles.cardHead}>
+                <Text style={styles.name}>{p.name}</Text>
+                <Text style={styles.price}>{price(p)}</Text>
+              </View>
+              <Text style={styles.feat}>
+                • Up to {p.max_guardians} guardian{p.max_guardians > 1 ? 's' : ''}
               </Text>
-            </TouchableOpacity>
-          </View>
-        );
-      })}
+              <Text style={styles.feat}>• Health trackers &amp; report</Text>
+              <Text style={styles.feat}>• 2-year medicine history</Text>
+              <Button
+                style={styles.cta}
+                title={
+                  isCurrent
+                    ? 'Current plan'
+                    : busyId === p.id
+                    ? '…'
+                    : p.price_cents
+                    ? 'Subscribe'
+                    : 'Switch to Free'
+                }
+                variant={isCurrent ? 'neutral' : 'primary'}
+                disabled={isCurrent || busyId === p.id}
+                onPress={() => choose(p)}
+              />
+            </Card>
+          );
+        })}
 
-      <Text style={styles.note}>
-        💳 Online payment (UPI / cards) and auto-renew are coming soon. For now
-        plans activate in test mode with no charge.
-      </Text>
-    </ScrollView>
+        <Text style={styles.note}>
+          💳 Online payment (UPI / cards) and auto-renew are coming soon. Paid
+          plans cannot be activated until then.
+        </Text>
+      </Content>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f6f8f6' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  current: { fontSize: 14, color: '#555', marginBottom: 14 },
-  currentName: { fontWeight: '800', color: '#2e7d32' },
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, elevation: 1 },
-  cardCurrent: { borderWidth: 2, borderColor: '#4CAF50' },
-  cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  name: { fontSize: 20, fontWeight: '800', color: '#222' },
-  price: { fontSize: 16, fontWeight: '700', color: '#4CAF50' },
-  feat: { fontSize: 13, color: '#666', marginTop: 6 },
-  btn: { marginTop: 14, padding: 12, borderRadius: 8, alignItems: 'center' },
-  btnChoose: { backgroundColor: '#4CAF50' },
-  btnCurrent: { backgroundColor: '#eee' },
-  btnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  btnTextCurrent: { color: '#888' },
-  note: { fontSize: 12, color: '#999', marginTop: 8, lineHeight: 17 },
+  currentRow: { gap: 8 },
+  currentLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  cardHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  name: { fontSize: 20, fontWeight: '800', color: colors.heading },
+  price: { fontSize: 16, fontWeight: '800', color: colors.emerald600 },
+  feat: { fontSize: 13, color: colors.body, marginTop: 6 },
+  cta: { marginTop: 16 },
+  note: { fontSize: 12, color: colors.muted, lineHeight: 18 },
 });

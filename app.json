@@ -2,7 +2,7 @@
   "expo": {
     "name": "PillReminder",
     "slug": "pillreminder",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,12 +19,16 @@
         "UIBackgroundModes": [
           "fetch",
           "remote-notification"
-        ]
-      }
+        ],
+        "NSCameraUsageDescription": "Take a photo of your medicine so you can recognise it when the reminder alarm rings.",
+        "NSPhotoLibraryUsageDescription": "Choose a photo of your medicine so you can recognise it when the reminder alarm rings."
+      },
+      "bundleIdentifier": "com.pillreminder.app",
+      "buildNumber": "1"
     },
     "android": {
       "package": "com.pillreminder.app",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#4CAF50"
@@ -36,10 +40,18 @@
         "android.permission.WAKE_LOCK",
         "android.permission.VIBRATE",
         "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.CAMERA"
       ]
     },
     "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose a photo of your medicine so you can recognise it when the reminder alarm rings.",
+          "cameraPermission": "Take a photo of your medicine so you can recognise it when the reminder alarm rings."
+        }
+      ],
       [
         "expo-notifications",
         {

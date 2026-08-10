@@ -27,10 +27,18 @@ export async function revokeGuardian() {
 }
 
 // User: their currently-active guardian link (or null).
+//
+// The user_id filter is load-bearing. RLS on guardian_links returns rows where
+// the caller is EITHER the patient or the guardian, so without it an account
+// that also guards someone else matches the wrong row and reports itself as its
+// own guardian.
 export async function getMyActiveGuardian() {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u?.user) return null;
   const { data, error } = await supabase
     .from('guardian_links')
     .select('guardian_id, status, created_at')
+    .eq('user_id', u.user.id)
     .eq('status', 'active')
     .limit(1)
     .maybeSingle();
@@ -81,9 +89,12 @@ export async function saveMyPushToken(token) {
 // User's device reads its active guardian's push token (RLS lets the user read
 // the linked guardian's profile). Returns { token, settings } or null.
 export async function getActiveGuardianTarget() {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u?.user) return null;
   const { data: link } = await supabase
     .from('guardian_links')
     .select('guardian_id')
+    .eq('user_id', u.user.id) // never match a link where WE are the guardian
     .eq('status', 'active')
     .limit(1)
     .maybeSingle();
@@ -118,11 +129,33 @@ export async function createAddMedicineRequest(userId, medPayload) {
   return { ok: !error, error: error?.message };
 }
 
+// Requests awaiting THIS user's approval.
+//
+// The user_id filter is load-bearing. RLS also lets a guardian read the
+// requests they created, so without it a guardian sees their own outgoing
+// request as one to approve — and approving it writes the medicine into the
+// guardian's own account instead of the patient's.
 export async function getPendingRequests() {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u?.user) return [];
   const { data } = await supabase
     .from('action_requests')
     .select('*')
+    .eq('user_id', u.user.id)
     .eq('status', 'pending')
+    .order('created_at', { ascending: false });
+  return data || [];
+}
+
+// Requests this guardian has filed, so their own screens can show progress
+// without ever being offered as approvable.
+export async function getMyOutgoingRequests() {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u?.user) return [];
+  const { data } = await supabase
+    .from('action_requests')
+    .select('*')
+    .eq('guardian_id', u.user.id)
     .order('created_at', { ascending: false });
   return data || [];
 }
@@ -133,9 +166,12 @@ export async function setRequestStatus(id, status) {
 
 // Guardian: users this guardian is linked to (with usernames).
 export async function getLinkedUsers() {
+  const { data: u } = await supabase.auth.getUser();
+  if (!u?.user) return [];
   const { data, error } = await supabase
     .from('guardian_links')
     .select('user_id, status, created_at')
+    .eq('guardian_id', u.user.id) // only links where WE are the guardian
     .eq('status', 'active');
   if (error || !data) return [];
   const out = [];

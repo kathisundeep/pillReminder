@@ -2,18 +2,25 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from 'react-native';
-import { loginUser, registerUser, importLocalMedicinesOnce } from '../utils/storage';
+import {
+  loginUser,
+  logoutUser,
+  importLocalMedicinesOnce,
+} from '../utils/storage';
 import { resyncAlarmsFromCloud } from '../utils/sync';
+import { getMyProfile } from '../utils/guardianCloud';
+import { ROLES, roleMatchesAccount, useRole } from '../utils/role';
+import { Button, Field, Input, Segmented } from '../components/ui';
+import { colors, type } from '../theme';
 
 export default function LoginScreen({ navigation }) {
-  const [mode, setMode] = useState('login');
+  const { setRole } = useRole();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -24,159 +31,148 @@ export default function LoginScreen({ navigation }) {
       Alert.alert('Missing info', 'Enter a username and password.');
       return;
     }
+    const wantedRole = asGuardian ? ROLES.GUARDIAN : ROLES.PATIENT;
+
     setBusy(true);
-    const fn = mode === 'login' ? loginUser : registerUser;
-    const res = await fn(username.trim(), password);
-    setBusy(false);
-    if (!res.ok) {
-      Alert.alert('Failed', res.error);
-      return;
-    }
-    if (mode === 'register') {
-      const lr = await loginUser(username.trim(), password);
-      if (!lr.ok) {
-        Alert.alert('Failed', lr.error);
+    try {
+      const login = await loginUser(username.trim(), password);
+      if (!login.ok) {
+        Alert.alert('Failed', login.error);
         return;
       }
-    }
-    if (asGuardian) {
-      navigation.replace('GuardianDashboard');
-      return;
-    }
-    // First cloud login (patient): import any medicines left in old on-device
-    // storage, then (re)schedule local alarms from the cloud list.
-    try {
-      const imported = await importLocalMedicinesOnce();
-      await resyncAlarmsFromCloud();
-      if (imported > 0) {
+
+      // Patient and guardian are separate account types. Refuse a mismatch
+      // rather than dropping someone into the wrong flow.
+      const profile = await getMyProfile();
+      if (profile && !roleMatchesAccount(wantedRole, profile)) {
+        await logoutUser();
         Alert.alert(
-          'Medicines imported',
-          `${imported} medicine(s) from this device were added to your account.`
+          asGuardian ? 'Not a guardian account' : 'Not a patient account',
+          asGuardian
+            ? `@${profile.username} takes medicines. Choose "I take medicines", or register a separate guardian account.`
+            : `@${profile.username} is a guardian account. Choose "I'm a guardian" to sign in.`
         );
+        return;
       }
-    } catch (e) {}
-    navigation.replace('Home');
+
+      if (wantedRole === ROLES.PATIENT) {
+        // First cloud login (patient): import any medicines left in old
+        // on-device storage, then (re)schedule local alarms from the cloud list.
+        try {
+          const imported = await importLocalMedicinesOnce();
+          await resyncAlarmsFromCloud();
+          if (imported > 0) {
+            Alert.alert(
+              'Medicines imported',
+              `${imported} medicine(s) from this device were added to your account.`
+            );
+          }
+        } catch (e) {}
+      }
+
+      // Swapping the role swaps the whole screen set, so there is nothing to
+      // navigate to — the navigator re-renders into the right flow.
+      setRole(wantedRole);
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const role = asGuardian ? 'guardian' : 'patient';
+  const subtitle = asGuardian ? 'Guardian log in' : 'Welcome back';
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <Text style={styles.logo}>Pill Reminder</Text>
-      <Text style={styles.subtitle}>
-        {asGuardian
-          ? mode === 'login'
-            ? 'Guardian log in'
-            : 'Create a guardian account'
-          : mode === 'login'
-          ? 'Welcome back'
-          : 'Create your account'}
-      </Text>
-
-      <View style={styles.roleRow}>
-        <TouchableOpacity
-          style={[styles.roleBtn, !asGuardian && styles.roleBtnOn]}
-          onPress={() => setAsGuardian(false)}
-        >
-          <Text style={[styles.roleText, !asGuardian && styles.roleTextOn]}>
-            I take medicines
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.roleBtn, asGuardian && styles.roleBtnOn]}
-          onPress={() => setAsGuardian(true)}
-        >
-          <Text style={[styles.roleText, asGuardian && styles.roleTextOn]}>
-            I'm a guardian
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Username"
-        autoCapitalize="none"
-        value={username}
-        onChangeText={setUsername}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-
-      <TouchableOpacity style={styles.button} onPress={submit} disabled={busy}>
-        <Text style={styles.buttonText}>
-          {busy ? '...' : mode === 'login' ? 'Log in' : 'Register'}
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        onPress={() => setMode(mode === 'login' ? 'register' : 'login')}
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.switchText}>
-          {mode === 'login'
-            ? "Don't have an account? Register"
-            : 'Already have an account? Log in'}
+        <View style={styles.brand}>
+          <Text style={styles.logo}>Pill Reminder</Text>
+          <Text style={styles.tagline}>Medication &amp; Guardian Platform</Text>
+        </View>
+
+        <Text style={styles.subtitle}>{subtitle}</Text>
+
+        <Segmented
+          style={styles.roleToggle}
+          value={role}
+          onChange={(next) => setAsGuardian(next === 'guardian')}
+          options={[
+            { value: 'patient', label: 'I take medicines' },
+            { value: 'guardian', label: "I'm a guardian" },
+          ]}
+        />
+
+        <Field label="Username">
+          <Input
+            placeholder="Username"
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={username}
+            onChangeText={setUsername}
+          />
+        </Field>
+
+        <Field label="Password">
+          <Input
+            placeholder="Password"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
+        </Field>
+
+        <Button
+          title={busy ? '…' : 'Log in'}
+          onPress={submit}
+          disabled={busy}
+          role={role}
+          style={styles.submit}
+        />
+
+        <Text
+          style={[styles.switchText, { color: asGuardian ? colors.teal700 : colors.emerald700 }]}
+          onPress={() => navigation.navigate('Register')}
+        >
+          Don't have an account? Register
         </Text>
-      </TouchableOpacity>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    padding: 24,
-  },
+  container: { flex: 1, backgroundColor: colors.canvas },
+  scroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  brand: { alignItems: 'center', marginBottom: 8 },
   logo: {
-    fontSize: 36,
-    fontWeight: '700',
-    color: '#4CAF50',
+    ...type.h1,
+    color: colors.emerald600,
     textAlign: 'center',
-    marginBottom: 4,
+  },
+  tagline: {
+    fontSize: 13,
+    color: colors.muted,
+    marginTop: 4,
+    textAlign: 'center',
   },
   subtitle: {
     textAlign: 'center',
-    color: '#666',
-    marginBottom: 32,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 14,
-    marginBottom: 12,
-    fontSize: 16,
-  },
-  button: {
-    backgroundColor: '#4CAF50',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  buttonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  roleRow: {
-    flexDirection: 'row',
-    backgroundColor: '#eee',
-    borderRadius: 10,
-    padding: 4,
+    color: colors.muted,
+    fontWeight: '600',
+    marginTop: 12,
     marginBottom: 20,
   },
-  roleBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
-  roleBtnOn: { backgroundColor: '#fff', elevation: 1 },
-  roleText: { color: '#666', fontWeight: '600', fontSize: 13 },
-  roleTextOn: { color: '#222' },
+  roleToggle: { marginBottom: 20 },
+  submit: { marginTop: 6 },
   switchText: {
-    color: '#4CAF50',
     textAlign: 'center',
     marginTop: 20,
-    fontSize: 14,
+    fontSize: 13.5,
+    fontWeight: '700',
   },
 });

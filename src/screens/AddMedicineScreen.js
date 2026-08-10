@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   Switch,
+  Image,
 } from 'react-native';
 import {
   addMedicine,
@@ -26,6 +27,21 @@ import { Audio } from 'expo-av';
 import WheelTimePicker from '../components/WheelTimePicker';
 import DaysSelector from '../components/DaysSelector';
 import { createAddMedicineRequest } from '../utils/guardianCloud';
+import { notifyPatientOfRequest } from '../utils/guardian';
+import {
+  takeMedicinePhoto,
+  pickMedicinePhoto,
+  photoUri,
+  photoSizeLabel,
+} from '../utils/photo';
+import { formatTime } from '../utils/doseState';
+import {
+  MED_FORMS,
+  MED_COLORS,
+  formFor,
+  tintFor,
+  colors as theme,
+} from '../theme';
 
 const TONE_SOURCES = {
   alarm: require('../../assets/sounds/alarm.wav'),
@@ -37,24 +53,9 @@ const TONE_SOURCES = {
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
 
-const FORM_OPTIONS = [
-  { id: 'Tablet', label: 'Tablet' },
-  { id: 'Capsule', label: 'Capsule' },
-  { id: 'Syrup', label: 'Syrup' },
-  { id: 'Injection', label: 'Injection' },
-  { id: 'Drops', label: 'Drops' },
-];
+const FORM_OPTIONS = MED_FORMS;
 
-const TABLET_COLORS = [
-  { name: 'White', hex: '#FFFFFF' },
-  { name: 'Red', hex: '#E53935' },
-  { name: 'Orange', hex: '#FB8C00' },
-  { name: 'Yellow', hex: '#FDD835' },
-  { name: 'Green', hex: '#43A047' },
-  { name: 'Blue', hex: '#1E88E5' },
-  { name: 'Pink', hex: '#EC407A' },
-  { name: 'Brown', hex: '#8D6E63' },
-];
+
 
 const QUICK_TIMES = [
   { label: 'Morning', time: '08:00' },
@@ -68,12 +69,6 @@ const QUICK_TIMES = [
 
 function pad(n) {
   return String(n).padStart(2, '0');
-}
-function formatTime(hhmm) {
-  const [h, m] = hhmm.split(':').map(Number);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const hh = h % 12 === 0 ? 12 : h % 12;
-  return `${hh}:${pad(m)} ${ampm}`;
 }
 
 export default function AddMedicineScreen({ route, navigation }) {
@@ -101,6 +96,8 @@ export default function AddMedicineScreen({ route, navigation }) {
   const previewRef = React.useRef(null);
   const [alertGuardian, setAlertGuardian] = useState(true);
   const [color, setColor] = useState('#FFFFFF');
+  const [photo, setPhoto] = useState(null);       // base64 JPEG or null
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const openPicker = () => {
     const now = new Date();
@@ -131,6 +128,7 @@ export default function AddMedicineScreen({ route, navigation }) {
       setForm(med.form || 'Tablet');
       setAlertGuardian(med.alertGuardian !== false);
       setColor(med.color || '#FFFFFF');
+      setPhoto(med.photo || null);
     })();
   }, [editingId]);
 
@@ -180,23 +178,43 @@ export default function AddMedicineScreen({ route, navigation }) {
     const n = nameInput.trim();
     if (!n) return;
     if (!names.some((x) => x.name === n))
-      setNames([...names, { name: n, color: color || '#FFFFFF' }]);
+      setNames([...names, { name: n, color: color || '#FFFFFF', photo }]);
     setNameInput('');
+    // A photo belongs to one specific medicine, so don't carry it over to the
+    // next one added to this schedule (the colour intentionally does carry).
+    setPhoto(null);
   };
   const removeName = (n) => setNames(names.filter((x) => x.name !== n));
+
+  // Capture/pick, then compress down to ~9 KB before it ever touches state.
+  const grabPhoto = async (source) => {
+    setPhotoBusy(true);
+    try {
+      const res =
+        source === 'camera'
+          ? await takeMedicinePhoto()
+          : await pickMedicinePhoto();
+      if (res.ok && res.photo) setPhoto(res.photo);
+      else if (res.error) Alert.alert('Photo unavailable', res.error);
+    } catch (e) {
+      Alert.alert('Photo failed', String(e?.message || e));
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
 
   const save = async () => {
     // Collect medicine name(s) with their colour. Edit mode is a single
     // medicine; create mode can batch several that share this schedule.
-    let entries; // [{ name, color }]
+    let entries; // [{ name, color, photo }]
     if (isEdit) {
       if (!name.trim()) return Alert.alert('Missing', 'Enter medicine name.');
-      entries = [{ name: name.trim(), color: color || '#FFFFFF' }];
+      entries = [{ name: name.trim(), color: color || '#FFFFFF', photo }];
     } else {
       const pending = nameInput.trim();
       entries = [...names];
       if (pending && !entries.some((e) => e.name === pending))
-        entries.push({ name: pending, color: color || '#FFFFFF' });
+        entries.push({ name: pending, color: color || '#FFFFFF', photo });
       if (entries.length === 0)
         return Alert.alert('Missing', 'Add at least one medicine name.');
     }
@@ -207,7 +225,7 @@ export default function AddMedicineScreen({ route, navigation }) {
 
     const sharedDays =
       frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
-    const buildDraft = (id, medName, medColor) => ({
+    const buildDraft = (id, medName, medColor, medPhoto) => ({
       id,
       name: medName,
       form: form || 'Tablet',
@@ -218,6 +236,7 @@ export default function AddMedicineScreen({ route, navigation }) {
       toneId: toneId || 'classic',
       alertGuardian,
       color: medColor || '#FFFFFF',
+      photo: medPhoto || null,
     });
 
     // Guardian request mode: send each medicine as an approval request.
@@ -227,9 +246,12 @@ export default function AddMedicineScreen({ route, navigation }) {
         for (const e of entries) {
           const res = await createAddMedicineRequest(
             requestUserId,
-            buildDraft(undefined, e.name, e.color)
+            buildDraft(undefined, e.name, e.color, e.photo)
           );
           if (!res.ok) throw new Error(res.error || 'request failed');
+          // Tell them now rather than whenever they next open the app.
+          // Best-effort: the request is already saved either way.
+          await notifyPatientOfRequest(requestUserId, e.name);
         }
         Alert.alert(
           'Request sent',
@@ -261,7 +283,12 @@ export default function AddMedicineScreen({ route, navigation }) {
         await updateMedicine(
           user,
           editingId,
-          buildDraft(editingId, entries[0].name, entries[0].color)
+          buildDraft(
+            editingId,
+            entries[0].name,
+            entries[0].color,
+            entries[0].photo
+          )
         );
       } else {
         let i = 0;
@@ -269,7 +296,7 @@ export default function AddMedicineScreen({ route, navigation }) {
           const id = `${Date.now()}_${i}_${Math.random()
             .toString(36)
             .slice(2, 7)}`;
-          await addMedicine(user, buildDraft(id, e.name, e.color));
+          await addMedicine(user, buildDraft(id, e.name, e.color, e.photo));
           i += 1;
         }
       }
@@ -345,6 +372,12 @@ export default function AddMedicineScreen({ route, navigation }) {
                   style={styles.nameChip}
                   onPress={() => removeName(n.name)}
                 >
+                  {n.photo ? (
+                    <Image
+                      source={{ uri: photoUri(n.photo) }}
+                      style={styles.nameChipPhoto}
+                    />
+                  ) : null}
                   <View
                     style={[styles.nameChipDot, { backgroundColor: n.color }]}
                   />
@@ -381,7 +414,7 @@ export default function AddMedicineScreen({ route, navigation }) {
               onPress={() => setForm(f.id)}
             >
               <Text style={[styles.quickChipText, on && styles.quickChipTextOn]}>
-                {f.label}
+                {f.icon}  {f.label}
               </Text>
             </TouchableOpacity>
           );
@@ -389,43 +422,79 @@ export default function AddMedicineScreen({ route, navigation }) {
       </View>
 
       <Text style={styles.label}>Colour</Text>
-      {!isEdit && (
-        <Text style={styles.nameHint}>
-          Pick a colour, then add the medicine above — each medicine keeps its
-          own colour.
-        </Text>
-      )}
+      <Text style={styles.nameHint}>
+        {isEdit
+          ? 'How this medicine is shown in your list and on the alarm.'
+          : 'Pick a colour, then add the medicine above — each medicine keeps its own colour.'}
+      </Text>
       <View style={styles.colorRow}>
-        {TABLET_COLORS.map((c) => {
+        {MED_COLORS.map((c) => {
           const selected = color === c.hex;
           return (
             <TouchableOpacity
               key={c.hex}
               onPress={() => setColor(c.hex)}
               style={styles.colorItem}
+              accessibilityRole="button"
+              accessibilityLabel={`${c.name} ${formFor(form).label}`}
+              accessibilityState={{ selected }}
             >
+              {/* The swatch previews the actual medicine: the form decides the
+                  glyph, the colour is the user's coding. */}
               <View
                 style={[
                   styles.colorSwatch,
-                  { backgroundColor: c.hex },
+                  { backgroundColor: tintFor(c.hex), borderColor: c.hex },
                   selected && styles.colorSwatchSelected,
                 ]}
               >
-                {selected && (
-                  <Text
-                    style={[
-                      styles.colorCheck,
-                      { color: c.hex === '#FDD835' || c.hex === '#FFFFFF' ? '#333' : '#fff' },
-                    ]}
-                  >
-                    ✓
-                  </Text>
-                )}
+                <Text style={styles.colorGlyph}>{formFor(form).icon}</Text>
               </View>
               <Text style={styles.colorName}>{c.name}</Text>
             </TouchableOpacity>
           );
         })}
+      </View>
+
+      <Text style={styles.label}>Photo (optional)</Text>
+      <Text style={styles.nameHint}>
+        {isEdit
+          ? 'A picture of the tablet, strip or bottle — shown when the alarm rings so it is easy to pick the right one.'
+          : 'A picture of the tablet, strip or bottle — shown when the alarm rings. Attach it before adding the medicine above; each medicine keeps its own photo.'}
+      </Text>
+      <View style={styles.photoRow}>
+        {photo ? (
+          <Image source={{ uri: photoUri(photo) }} style={styles.photoPreview} />
+        ) : (
+          <View style={[styles.photoPreview, styles.photoEmpty]}>
+            <Text style={styles.photoEmptyText}>No{'\n'}photo</Text>
+          </View>
+        )}
+        <View style={styles.photoBtns}>
+          <TouchableOpacity
+            style={styles.photoBtn}
+            onPress={() => grabPhoto('camera')}
+            disabled={photoBusy}
+          >
+            <Text style={styles.photoBtnText}>
+              {photoBusy ? 'Working…' : '📷  Take a photo'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.photoBtn}
+            onPress={() => grabPhoto('library')}
+            disabled={photoBusy}
+          >
+            <Text style={styles.photoBtnText}>🖼  Choose from gallery</Text>
+          </TouchableOpacity>
+          {photo ? (
+            <TouchableOpacity onPress={() => setPhoto(null)}>
+              <Text style={styles.photoRemove}>
+                Remove photo · {photoSizeLabel(photo)}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
 
       <Text style={styles.label}>Times</Text>
@@ -580,8 +649,6 @@ export default function AddMedicineScreen({ route, navigation }) {
             ? 'Saving...'
             : isRequest
             ? 'Send request'
-            : isEdit
-            ? 'Save changes'
             : 'Save'}
         </Text>
       </TouchableOpacity>
@@ -719,20 +786,62 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   nameChipText: { color: '#1565c0', fontWeight: '700' },
-  colorRow: { flexDirection: 'row', flexWrap: 'wrap' },
-  colorItem: { alignItems: 'center', width: 64, marginBottom: 12 },
-  colorSwatch: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  nameChipPhoto: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    marginRight: 8,
+    backgroundColor: '#cfd8dc',
+  },
+  photoRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  photoPreview: {
+    width: 92,
+    height: 92,
+    borderRadius: 12,
+    backgroundColor: '#eceff1',
+    marginRight: 14,
+  },
+  photoEmpty: {
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: '#ddd',
+    borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  colorSwatchSelected: { borderWidth: 3, borderColor: '#333' },
-  colorCheck: { fontSize: 18, fontWeight: '800' },
-  colorName: { fontSize: 11, color: '#666', marginTop: 4 },
+  photoEmptyText: { color: '#aaa', fontSize: 12, textAlign: 'center' },
+  photoBtns: { flex: 1 },
+  photoBtn: {
+    borderWidth: 1,
+    borderColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 11,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  photoBtnText: { color: '#4CAF50', fontWeight: '700', fontSize: 14 },
+  photoRemove: {
+    color: '#e53935',
+    fontSize: 12,
+    textDecorationLine: 'underline',
+    marginTop: 2,
+  },
+  colorRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  colorItem: { alignItems: 'center', width: 62, marginBottom: 12 },
+  colorSwatch: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colorSwatchSelected: {
+    borderWidth: 3,
+    borderColor: theme.heading,
+    transform: [{ scale: 1.08 }],
+  },
+  colorGlyph: { fontSize: 20 },
+  colorName: { fontSize: 11, color: theme.muted, marginTop: 5, fontWeight: '600' },
   timesWrap: { flexDirection: 'row', flexWrap: 'wrap' },
   timeChip: {
     backgroundColor: '#e8f5e9',

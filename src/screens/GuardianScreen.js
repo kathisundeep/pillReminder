@@ -1,15 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Switch,
-  Alert,
-  Share,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, StyleSheet, Switch, Alert, Share, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   getMyProfile,
@@ -18,10 +8,25 @@ import {
   getMyActiveGuardian,
   revokeGuardian,
 } from '../utils/guardianCloud';
+import { NOTIFY_MODES, notifyModeOf } from '../utils/guardian';
+import {
+  Screen,
+  Content,
+  TitleHeader,
+  Card,
+  CardTitle,
+  CardSubtitle,
+  Button,
+  Chip,
+  ChipGroup,
+  Field,
+  Avatar,
+} from '../components/ui';
+import { colors, radius } from '../theme';
 
 const GRACE_OPTIONS = [5, 15, 30, 60];
 
-export default function GuardianScreen() {
+export default function GuardianScreen({ navigation }) {
   const [profile, setProfile] = useState(null);
   const [guardian, setGuardian] = useState(null);
   const [code, setCode] = useState(null);
@@ -45,7 +50,7 @@ export default function GuardianScreen() {
 
   const settings = profile?.settings || {};
   const grace = settings.graceMinutes || 30;
-  const notifyMode = settings.notifyMode || 'missed';
+  const notifyMode = notifyModeOf(profile);
   const approvalRequired = settings.approvalRequired !== false;
 
   const patchSettings = async (patch) => {
@@ -71,7 +76,7 @@ export default function GuardianScreen() {
       await Share.share({
         message:
           `Be my guardian on PillReminder.\n\n` +
-          `1. Install the app and tap "Guardian login".\n` +
+          `1. Install the app and tap "I'm a guardian".\n` +
           `2. Enter my username: ${profile.username}\n` +
           `3. Enter this code: ${code}\n\n(Code expires in 30 days.)`,
       });
@@ -94,187 +99,162 @@ export default function GuardianScreen() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color="#4CAF50" />
-      </View>
+      <Screen>
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.teal600} />
+        </View>
+      </Screen>
     );
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
-    >
-      <Text style={styles.intro}>
-        A guardian signs in on their own phone and can see your medicines and get
-        alerted if you miss a dose.
-      </Text>
+    <Screen>
+      <TitleHeader title="Guardian" onClose={() => navigation.goBack()} />
+      <Content>
+        <Card>
+          <CardTitle>Your guardian</CardTitle>
+          {guardian ? (
+            <>
+              <View style={styles.guardianRow}>
+                <Avatar
+                  name={guardian.guardianName || guardian.guardianUsername}
+                  role="guardian"
+                  size={44}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.guardianName}>
+                    {guardian.guardianName || guardian.guardianUsername}
+                  </Text>
+                  <Text style={styles.sub}>
+                    @{guardian.guardianUsername} · linked
+                  </Text>
+                </View>
+              </View>
+              <Button
+                title="Remove guardian"
+                variant="neutral"
+                onPress={onRemove}
+                textStyle={{ color: colors.danger }}
+              />
+            </>
+          ) : (
+            <CardSubtitle>
+              A guardian signs in on their own phone and can see your medicines
+              and be alerted if you miss a dose. No guardian linked yet.
+            </CardSubtitle>
+          )}
+        </Card>
 
-      {/* Current guardian */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Your guardian</Text>
-        {guardian ? (
-          <>
-            <Text style={styles.guardianName}>
-              {guardian.guardianName || guardian.guardianUsername}
-            </Text>
-            <Text style={styles.sub}>@{guardian.guardianUsername} · linked</Text>
-            <TouchableOpacity onPress={onRemove}>
-              <Text style={styles.removeText}>Remove guardian</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          <Text style={styles.sub}>No guardian linked yet.</Text>
-        )}
-      </View>
+        <Card>
+          <CardTitle>{guardian ? 'Change guardian' : 'Invite a guardian'}</CardTitle>
+          <CardSubtitle>
+            Your username is {profile?.username}. Generate a one-time code and
+            share it — when your new guardian uses it, any previous guardian is
+            removed.
+          </CardSubtitle>
 
-      {/* Invite / change */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          {guardian ? 'Change guardian' : 'Invite a guardian'}
-        </Text>
-        <Text style={styles.sub}>
-          Your username is <Text style={styles.bold}>{profile?.username}</Text>.
-          Generate a one-time code and share it. When your new guardian uses it,
-          any previous guardian is removed.
-        </Text>
-
-        {code ? (
-          <View style={styles.codeBox}>
-            <Text style={styles.codeText}>{code}</Text>
-            <Text style={styles.codeHint}>Share with your guardian (expires in 30 days)</Text>
-          </View>
-        ) : null}
-
-        <TouchableOpacity
-          style={[styles.primaryBtn, busy && styles.btnDisabled]}
-          onPress={onGenerate}
-          disabled={busy}
-        >
-          <Text style={styles.primaryBtnText}>
-            {busy ? 'Working…' : code ? 'Generate a new code' : 'Generate pairing code'}
-          </Text>
-        </TouchableOpacity>
-        {code ? (
-          <TouchableOpacity style={styles.ghostBtn} onPress={shareInvite}>
-            <Text style={styles.ghostBtnText}>Share invite</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
-
-      {/* Alert settings */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Alerts</Text>
-        <Text style={styles.label}>Alert my guardian if I'm late by</Text>
-        <View style={styles.row}>
-          {GRACE_OPTIONS.map((m) => (
-            <TouchableOpacity
-              key={m}
-              style={[styles.chip, grace === m && styles.chipOn]}
-              onPress={() => patchSettings({ graceMinutes: m })}
-            >
-              <Text style={[styles.chipText, grace === m && styles.chipTextOn]}>
-                {m} min
+          {code ? (
+            <View style={styles.codeBox}>
+              <Text style={styles.codeText}>{String(code).split('').join(' ')}</Text>
+              <Text style={styles.codeHint}>
+                Share with your guardian (expires in 30 days)
               </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+            </View>
+          ) : null}
 
-        <View style={styles.rowBetween}>
-          <Text style={styles.label}>Also notify when I take a dose</Text>
-          <Switch
-            value={notifyMode === 'both'}
-            onValueChange={(v) => patchSettings({ notifyMode: v ? 'both' : 'missed' })}
-            trackColor={{ true: '#4CAF50' }}
-          />
-        </View>
-
-        <View style={styles.rowBetween}>
-          <View style={{ flex: 1, paddingRight: 12 }}>
-            <Text style={styles.label}>Require my approval for guardian changes</Text>
-            <Text style={styles.sub}>
-              When on, a guardian's "add medicine" waits for you to approve.
-            </Text>
+          <View style={{ gap: 8 }}>
+            <Button
+              title={busy ? 'Working…' : code ? 'Generate a new code' : 'Generate pairing code'}
+              onPress={onGenerate}
+              disabled={busy}
+              role="guardian"
+            />
+            {code ? (
+              <Button title="Share invite" variant="neutral" onPress={shareInvite} />
+            ) : null}
           </View>
-          <Switch
-            value={approvalRequired}
-            onValueChange={(v) => patchSettings({ approvalRequired: v })}
-            trackColor={{ true: '#4CAF50' }}
-          />
-        </View>
-      </View>
-    </ScrollView>
+        </Card>
+
+        <Card>
+          <CardTitle>Alerts</CardTitle>
+
+          <Field label="Alert my guardian if I'm late by">
+            <ChipGroup>
+              {GRACE_OPTIONS.map((m) => (
+                <Chip
+                  key={m}
+                  label={`${m} min`}
+                  active={grace === m}
+                  onPress={() => patchSettings({ graceMinutes: m })}
+                />
+              ))}
+            </ChipGroup>
+          </Field>
+
+          <Field label="Notify my guardian">
+            <ChipGroup>
+              {NOTIFY_MODES.map((m) => (
+                <Chip
+                  key={m.id}
+                  label={m.label}
+                  active={notifyMode === m.id}
+                  onPress={() => patchSettings({ notifyMode: m.id })}
+                />
+              ))}
+            </ChipGroup>
+          </Field>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={styles.switchLabel}>
+                Require my approval for guardian changes
+              </Text>
+              <Text style={styles.sub}>
+                When on, a guardian's "add medicine" waits for you to approve.
+              </Text>
+            </View>
+            <Switch
+              value={approvalRequired}
+              onValueChange={(v) => patchSettings({ approvalRequired: v })}
+              trackColor={{ true: colors.emerald600 }}
+            />
+          </View>
+        </Card>
+      </Content>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f6f8f6' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  intro: { fontSize: 14, color: '#555', lineHeight: 20, marginBottom: 16 },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 8 },
-  guardianName: { fontSize: 17, fontWeight: '700', color: '#2e7d32', marginTop: 4 },
-  sub: { fontSize: 13, color: '#777', marginTop: 4, lineHeight: 18 },
-  bold: { fontWeight: '800', color: '#333' },
-  label: { fontSize: 14, fontWeight: '600', color: '#333', marginTop: 14, marginBottom: 8 },
-  row: { flexDirection: 'row', flexWrap: 'wrap' },
-  rowBetween: {
+  guardianRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 14,
+  },
+  guardianName: { fontSize: 16, fontWeight: '800', color: colors.heading },
+  sub: { fontSize: 12.5, color: colors.muted, marginTop: 2, lineHeight: 18 },
+  codeBox: {
+    backgroundColor: colors.cardSubtle,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 18,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  codeText: {
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 4,
+    color: colors.heading,
+  },
+  codeHint: { fontSize: 12, color: colors.muted, marginTop: 8 },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginTop: 6,
   },
-  chip: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  chipOn: { backgroundColor: '#4CAF50', borderColor: '#4CAF50' },
-  chipText: { color: '#333', fontWeight: '600' },
-  chipTextOn: { color: '#fff' },
-  codeBox: {
-    backgroundColor: '#f1f8e9',
-    borderRadius: 10,
-    padding: 16,
-    alignItems: 'center',
-    marginVertical: 12,
-  },
-  codeText: { fontSize: 40, fontWeight: '800', letterSpacing: 8, color: '#2e7d32' },
-  codeHint: { fontSize: 12, color: '#777', marginTop: 6 },
-  primaryBtn: {
-    marginTop: 12,
-    backgroundColor: '#4CAF50',
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  btnDisabled: { opacity: 0.6 },
-  ghostBtn: {
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#4CAF50',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  ghostBtnText: { color: '#4CAF50', fontWeight: '700' },
-  removeText: {
-    color: '#e53935',
-    marginTop: 12,
-    textDecorationLine: 'underline',
-  },
+  switchLabel: { fontSize: 14, fontWeight: '700', color: colors.heading },
 });

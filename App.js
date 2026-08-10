@@ -6,6 +6,9 @@ import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 
 import LoginScreen from './src/screens/LoginScreen';
+import RegisterScreen from './src/screens/RegisterScreen';
+import ProfileDetailsScreen from './src/screens/ProfileDetailsScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import AddMedicineScreen from './src/screens/AddMedicineScreen';
 import AlarmScreen from './src/screens/AlarmScreen';
@@ -28,26 +31,33 @@ import {
   notifyGuardianTaken,
 } from './src/utils/guardian';
 import { resyncAlarmsFromCloud } from './src/utils/sync';
+import { ROLES, RoleProvider, resolveRole } from './src/utils/role';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 const Stack = createNativeStackNavigator();
 
 export default function App() {
-  const [initialRoute, setInitialRoute] = useState(null);
+  const [booted, setBooted] = useState(false);
+  // null = signed out. Otherwise the ACTIVE FLOW, which decides not just the
+  // landing screen but which screens exist at all.
+  const [role, setRole] = useState(null);
   const navRef = useRef(null);
 
   useEffect(() => {
     (async () => {
       await ensureNotificationSetup();
       const user = await getSession();
-      setInitialRoute(user ? 'Home' : 'Login');
-      // If already logged in, re-arm local alarms from the cloud medicine list
-      // (so alarms work after a reboot or on a freshly-signed-in device).
-      if (user) {
+      const activeRole = user ? await resolveRole() : null;
+      setRole(activeRole);
+      setBooted(true);
+
+      // Only a patient has medicines to arm alarms for or history to prune.
+      if (user && activeRole !== ROLES.GUARDIAN) {
         resyncAlarmsFromCloud();
         pruneOldHistory(); // 2-year retention fallback
       }
-      // Guardian: register for push (to be a guardian), schedule the
-      // periodic background sweep, and run one sweep right away.
+      // Both roles register a push token: the patient's device pushes to the
+      // guardian, and the guardian's device pushes approval requests back.
       registerForPushTokenAsync();
       registerBackgroundSweep();
       sweepMissedDoses();
@@ -58,13 +68,24 @@ export default function App() {
       if (state === 'active') sweepMissedDoses();
     });
 
+    // Each role registers a different set of screens, so a route that exists in
+    // one flow is genuinely absent in the other. Navigating to a missing route
+    // throws, so check before moving.
+    const go = (name, params) => {
+      const nav = navRef.current;
+      if (!nav) return;
+      const routes = nav.getRootState?.()?.routeNames || [];
+      if (routes.includes(name)) nav.navigate(name, params);
+    };
+
     const receivedSub = Notifications.addNotificationReceivedListener(
       (notification) => {
         const data = notification.request.content.data || {};
-        if (data.type === 'pill-alarm' && navRef.current) {
-          navRef.current.navigate('Alarm', {
+        if (data.type === 'pill-alarm') {
+          go('Alarm', {
             medicineId: data.medicineId,
             medicineName: data.medicineName,
+            slot: data.slot ?? null,
           });
         }
       }
@@ -73,42 +94,51 @@ export default function App() {
     const responseSub = Notifications.addNotificationResponseReceivedListener(
       async (response) => {
         const data = response.notification.request.content.data || {};
+
+        // A guardian asked to add a medicine — take the patient to the
+        // approvals screen rather than leaving them to find the banner.
+        if (data.type === 'guardian-request') {
+          go('Approvals');
+          return;
+        }
+
         if (data.type !== 'pill-alarm') return;
         const action = response.actionIdentifier;
         const user = await getSession();
 
         if (action === 'TAKEN') {
           if (user) {
-            await recordDose(user, data.medicineId, 'taken');
+            await recordDose(user, data.medicineId, 'taken', data.slot ?? null);
             await notifyGuardianTaken(user, data.medicineName);
           }
-          if (navRef.current) navRef.current.navigate('Home');
+          go('Home');
         } else if (action === 'RESCHEDULE') {
           if (user) {
-            await recordDose(user, data.medicineId, 'snoozed');
+            await recordDose(user, data.medicineId, 'snoozed', data.slot ?? null);
             const meds = await getMedicines(user);
             const med = meds.find((m) => m.id === data.medicineId);
             await scheduleSnooze({
               medicineId: data.medicineId,
               medicineName: data.medicineName,
               minutes: med?.snoozeMinutes || 10,
+              toneId: med?.toneId,
+              slot: data.slot ?? null,
             });
           }
-          if (navRef.current) navRef.current.navigate('Home');
+          go('Home');
         } else if (action === 'SKIP') {
           // Explicit skip — guardian gets alerted by the missed-dose sweep.
           if (user) {
-            await recordDose(user, data.medicineId, 'skipped');
+            await recordDose(user, data.medicineId, 'skipped', data.slot ?? null);
             sweepMissedDoses();
           }
-          if (navRef.current) navRef.current.navigate('Home');
+          go('Home');
         } else {
-          if (navRef.current) {
-            navRef.current.navigate('Alarm', {
-              medicineId: data.medicineId,
-              medicineName: data.medicineName,
-            });
-          }
+          go('Alarm', {
+            medicineId: data.medicineId,
+            medicineName: data.medicineName,
+            slot: data.slot ?? null,
+          });
         }
       }
     );
@@ -120,71 +150,136 @@ export default function App() {
     };
   }, []);
 
-  if (!initialRoute) return null;
+  if (!booted) return null;
+
+  const isGuardian = role === ROLES.GUARDIAN;
 
   return (
-    <NavigationContainer ref={navRef}>
-      <StatusBar style="light" />
-      <Stack.Navigator
-        initialRouteName={initialRoute}
-        screenOptions={{ headerStyle: { backgroundColor: '#4CAF50' }, headerTintColor: '#fff' }}
-      >
-        <Stack.Screen
-          name="Login"
-          component={LoginScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="Home"
-          component={HomeScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="AddMedicine"
-          component={AddMedicineScreen}
-          options={{ title: 'Add medicine' }}
-        />
-        <Stack.Screen
-          name="Guardian"
-          component={GuardianScreen}
-          options={{ title: 'Guardian' }}
-        />
-        <Stack.Screen
-          name="GuardianDashboard"
-          component={GuardianDashboardScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="GuardianUser"
-          component={GuardianUserScreen}
-          options={{ title: 'Medicines' }}
-        />
-        <Stack.Screen
-          name="Approvals"
-          component={ApprovalsScreen}
-          options={{ title: 'Guardian requests' }}
-        />
-        <Stack.Screen
-          name="Trackers"
-          component={TrackersScreen}
-          options={{ title: 'Health trackers' }}
-        />
-        <Stack.Screen
-          name="HealthReport"
-          component={HealthReportScreen}
-          options={{ title: 'Health report' }}
-        />
-        <Stack.Screen
-          name="Plans"
-          component={PlansScreen}
-          options={{ title: 'Plans & subscription' }}
-        />
-        <Stack.Screen
-          name="Alarm"
-          component={AlarmScreen}
-          options={{ headerShown: false, gestureEnabled: false }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <ErrorBoundary>
+      <RoleProvider value={{ role, setRole }}>
+        <NavigationContainer ref={navRef}>
+        <StatusBar style="light" />
+        <Stack.Navigator
+          screenOptions={{
+            headerStyle: {
+              backgroundColor: isGuardian ? '#00796b' : '#4CAF50',
+            },
+            headerTintColor: '#fff',
+          }}
+        >
+          {/* Signed out */}
+          {role === null && (
+            <>
+              <Stack.Screen
+                name="Login"
+                component={LoginScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="Register"
+                component={RegisterScreen}
+                options={{ headerShown: false }}
+              />
+            </>
+          )}
+
+          {/* Guardian flow. No Home, no AddMedicine-for-self, no Alarm, no
+              Trackers, no Plans — a guardian has no medicines of their own.
+              AddMedicine appears only in request-for-a-patient mode, and
+              HealthReport only ever reads a linked patient's data. */}
+          {isGuardian && (
+            <>
+              <Stack.Screen
+                name="GuardianDashboard"
+                component={GuardianDashboardScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="GuardianUser"
+                component={GuardianUserScreen}
+                options={{ title: 'Medicines' }}
+              />
+              <Stack.Screen
+                name="AddMedicine"
+                component={AddMedicineScreen}
+                options={{ title: 'Request medicine' }}
+              />
+              <Stack.Screen
+                name="HealthReport"
+                component={HealthReportScreen}
+                options={{ title: 'Health report' }}
+              />
+              <Stack.Screen
+                name="ProfileDetails"
+                component={ProfileDetailsScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="Settings"
+                component={SettingsScreen}
+                options={{ headerShown: false }}
+              />
+            </>
+          )}
+
+          {/* Patient flow */}
+          {role === ROLES.PATIENT && (
+            <>
+              <Stack.Screen
+                name="Home"
+                component={HomeScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="AddMedicine"
+                component={AddMedicineScreen}
+                options={{ title: 'Add medicine' }}
+              />
+              <Stack.Screen
+                name="Guardian"
+                component={GuardianScreen}
+                options={{ title: 'Guardian' }}
+              />
+              <Stack.Screen
+                name="Approvals"
+                component={ApprovalsScreen}
+                options={{ title: 'Guardian requests' }}
+              />
+              <Stack.Screen
+                name="Trackers"
+                component={TrackersScreen}
+                options={{ title: 'Health trackers' }}
+              />
+              <Stack.Screen
+                name="HealthReport"
+                component={HealthReportScreen}
+                options={{ title: 'Health report' }}
+              />
+              <Stack.Screen
+                name="Plans"
+                component={PlansScreen}
+                options={{ title: 'Plans & subscription' }}
+              />
+              <Stack.Screen
+                name="Alarm"
+                component={AlarmScreen}
+                options={{ headerShown: false, gestureEnabled: false }}
+              />
+              <Stack.Screen
+                name="ProfileDetails"
+                component={ProfileDetailsScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="Settings"
+                component={SettingsScreen}
+                options={{ headerShown: false }}
+              />
+            </>
+          )}
+        </Stack.Navigator>
+        </NavigationContainer>
+      </RoleProvider>
+    </ErrorBoundary>
   );
 }

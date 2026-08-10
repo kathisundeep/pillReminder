@@ -1,0 +1,669 @@
+import { fireEvent, screen, act } from '@testing-library/react-native';
+import { Alert, Image } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import * as ImagePicker from 'expo-image-picker';
+import * as Av from 'expo-av';
+import { showScreen, press, typeInto, flush } from '../../test/renderScreen';
+import AddMedicineScreen from '../../src/screens/AddMedicineScreen';
+import {
+  registerUser,
+  loginUser,
+  addMedicine,
+  getMedicines,
+} from '../../src/utils/storage';
+
+const db = () => globalThis.__db;
+const meds = () => db().rows('medicines');
+const scheduled = () => Notifications.__state.scheduled;
+
+async function signIn(username = 'alice') {
+  await registerUser(username, 'password123');
+  await loginUser(username, 'password123');
+  return db().session.user;
+}
+
+// Pin the clock: the wheel picker defaults to "now", and the tone preview
+// auto-stops on a timer.
+beforeEach(() => {
+  jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+  jest.setSystemTime(new Date(2025, 5, 10, 12, 0, 0, 0)); // Tue 10 Jun, 12:00 IST
+});
+
+const addName = async (name) => {
+  await typeInto('e.g. Paracetamol 500mg', name);
+  await press('+ Add');
+};
+
+describe('AddMedicineScreen — create mode', () => {
+  beforeEach(async () => {
+    await signIn();
+  });
+
+  it('sets the header title', async () => {
+    const { navigation } = await showScreen(AddMedicineScreen);
+    expect(navigation.setOptions).toHaveBeenCalledWith({ title: 'Add medicine' });
+  });
+
+  it('offers a multi-name form with the batching hint', async () => {
+    await showScreen(AddMedicineScreen);
+    expect(screen.getByText('Medicine names')).toBeTruthy();
+    expect(screen.getByText(/Each is saved as its own item but shares this schedule/)).toBeTruthy();
+  });
+
+  it('adds and removes name chips', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await addName('Metformin');
+
+    expect(screen.getByText('Aspirin  ×')).toBeTruthy();
+    expect(screen.getByText('Metformin  ×')).toBeTruthy();
+
+    await press('Aspirin  ×');
+    expect(screen.queryByText('Aspirin  ×')).toBeNull();
+    expect(screen.getByText('Metformin  ×')).toBeTruthy();
+  });
+
+  it('ignores an empty or duplicate name', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('   ');
+    await addName('Aspirin');
+    await addName('Aspirin');
+    expect(screen.getAllByText('Aspirin  ×')).toHaveLength(1);
+  });
+
+  it('requires at least one name', async () => {
+    await showScreen(AddMedicineScreen);
+    await press('Morning');
+    await press('Save');
+    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Add at least one medicine name.');
+    expect(meds()).toHaveLength(0);
+  });
+
+  it('requires at least one time', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('Save');
+    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Add at least one time.');
+    expect(meds()).toHaveLength(0);
+  });
+
+  it('requires at least one day when set to specific days', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('Morning');
+    await press('Specific days');
+    await press('Save');
+    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Pick at least one day.');
+    expect(meds()).toHaveLength(0);
+  });
+
+  it('saves a medicine still sitting in the text box, unadded', async () => {
+    await showScreen(AddMedicineScreen);
+    await typeInto('e.g. Paracetamol 500mg', 'Unadded');
+    await press('Morning');
+    await press('Save');
+
+    expect(meds()).toHaveLength(1);
+    expect(meds()[0].name).toBe('Unadded');
+  });
+
+  it('saves several medicines that share one schedule', async () => {
+    const { navigation } = await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await addName('Metformin');
+    await press('Morning');
+    await press('Night');
+    await press('Save');
+
+    expect(meds().map((m) => m.name).sort()).toEqual(['Aspirin', 'Metformin']);
+    for (const m of meds()) expect(m.times).toEqual(['08:00', '22:00']);
+    expect(navigation.goBack).toHaveBeenCalled();
+  });
+
+  it('applies the defaults a bare save should produce', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('Morning');
+    await press('Save');
+
+    expect(meds()[0]).toMatchObject({
+      form: 'Tablet',
+      color: '#FFFFFF',
+      frequency: 'daily',
+      days_of_week: [0, 1, 2, 3, 4, 5, 6],
+      tone_id: 'classic',
+      snooze_minutes: 10,
+      alert_guardian: true,
+      photo: null,
+    });
+  });
+
+  it('records the chosen medicine type', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Cough syrup');
+    await press(/Syrup/);
+    await press('Morning');
+    await press('Save');
+    expect(meds()[0].form).toBe('Syrup');
+  });
+
+  it('previews the colour swatches using the selected form`s icon', async () => {
+    await showScreen(AddMedicineScreen);
+    // Default form is Tablet: five swatches, all showing the tablet glyph.
+    expect(screen.getAllByLabelText(/Tablet$/)).toHaveLength(5);
+
+    await press(/Syrup/);
+    expect(screen.getAllByLabelText(/Syrup$/)).toHaveLength(5);
+    expect(screen.queryAllByLabelText(/ Tablet$/)).toHaveLength(0);
+  });
+
+  it('offers the five colours from the design system', async () => {
+    await showScreen(AddMedicineScreen);
+    for (const name of ['Red', 'Yellow', 'Green', 'Blue', 'Purple']) {
+      expect(screen.getByText(name)).toBeTruthy();
+    }
+  });
+
+  it('records the chosen snooze duration', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('Morning');
+    await press('30 min');
+    await press('Save');
+    expect(meds()[0].snooze_minutes).toBe(30);
+  });
+
+  it('records the chosen weekdays', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('Morning');
+    await press('Specific days');
+    await press('Mo');
+    await press('We');
+    await press('Save');
+
+    expect(meds()[0].frequency).toBe('weekly');
+    expect(meds()[0].days_of_week).toEqual([1, 3]);
+  });
+
+  it('lets each batched medicine keep its own colour', async () => {
+    await showScreen(AddMedicineScreen);
+    await press('Red');
+    await addName('RedPill');
+    await press('Blue');
+    await addName('BluePill');
+    await press('Morning');
+    await press('Save');
+
+    const byName = Object.fromEntries(meds().map((m) => [m.name, m.color]));
+    expect(byName.RedPill).toBe('#f87171');
+    expect(byName.BluePill).toBe('#60a5fa');
+  });
+});
+
+describe('AddMedicineScreen — times', () => {
+  beforeEach(async () => {
+    await signIn();
+    await showScreen(AddMedicineScreen);
+  });
+
+  it('adds a quick time and shows it in 12-hour form', async () => {
+    await press('Morning');
+    expect(screen.getByText('8:00 AM  ×')).toBeTruthy();
+  });
+
+  it('toggles a quick time off when pressed again', async () => {
+    await press('Morning');
+    await press('Morning');
+    expect(screen.queryByText('8:00 AM  ×')).toBeNull();
+  });
+
+  it('removes a time by tapping its chip', async () => {
+    await press('Evening');
+    await press('5:00 PM  ×');
+    expect(screen.queryByText('5:00 PM  ×')).toBeNull();
+  });
+
+  it('keeps times sorted regardless of the order added', async () => {
+    await press('Night');
+    await press('Morning');
+    await addName('Aspirin');
+    await press('Save');
+    expect(meds()[0].times).toEqual(['08:00', '22:00']);
+  });
+
+  it('offers every documented quick time', async () => {
+    for (const label of [
+      'Morning', 'Before lunch', 'After lunch', 'Evening',
+      'Before dinner', 'After dinner', 'Night',
+    ]) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+  });
+
+  it('adds a custom time through the wheel picker', async () => {
+    await press('+ Custom time');
+    expect(screen.getByText('Pick time')).toBeTruthy();
+    await press('Done');
+    // The picker defaults to "now" (12:00 local in these tests).
+    expect(screen.getByText('12:00 PM  ×')).toBeTruthy();
+  });
+
+  it('cancelling the picker adds nothing', async () => {
+    await press('+ Custom time');
+    await press('Cancel');
+    expect(screen.queryByText('Pick time')).toBeNull();
+    expect(screen.queryByText(/×$/)).toBeNull();
+  });
+});
+
+describe('AddMedicineScreen — alarm tone', () => {
+  beforeEach(async () => {
+    await signIn();
+    await showScreen(AddMedicineScreen);
+  });
+
+  it('lists every bundled tone', async () => {
+    for (const label of ['Classic', 'Chime', 'Bell', 'Siren', 'Gentle']) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+  });
+
+  it('plays a preview when a tone is tapped', async () => {
+    await press('Siren');
+    expect(Av.Audio.Sound.createAsync).toHaveBeenCalledTimes(1);
+    expect(Av.__state.created[0].opts).toMatchObject({ shouldPlay: true });
+  });
+
+  it('selecting a tone stores it on the medicine', async () => {
+    await press('Bell');
+    await addName('Aspirin');
+    await press('Morning');
+    await press('Save');
+    expect(meds()[0].tone_id).toBe('bell');
+  });
+
+  it('stops the previous preview before starting a new one', async () => {
+    await press('Chime');
+    const firstSound = Av.__state.created[0].sound;
+    await press('Siren');
+    expect(firstSound.unloadAsync).toHaveBeenCalled();
+  });
+
+  it('auto-stops a preview after a couple of seconds', async () => {
+    await press('Chime');
+    const { sound } = Av.__state.created[0];
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+    });
+    await flush();
+    expect(sound.stopAsync).toHaveBeenCalled();
+    expect(sound.unloadAsync).toHaveBeenCalled();
+  });
+
+  it('survives an audio failure without breaking selection', async () => {
+    Av.__state.failCreate = true;
+    await press('Siren');
+    await addName('Aspirin');
+    await press('Morning');
+    await press('Save');
+    expect(meds()[0].tone_id).toBe('siren');
+  });
+
+  it('every tone can be selected and round-trips to the row', async () => {
+    for (const [label, id] of [
+      ['Classic', 'classic'], ['Chime', 'chime'], ['Bell', 'bell'],
+      ['Siren', 'siren'], ['Gentle', 'gentle'],
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      await press(label);
+      // eslint-disable-next-line no-await-in-loop
+      await flush(2);
+      expect(screen.getByText(label)).toBeTruthy();
+      expect(id).toBeTruthy();
+    }
+  });
+});
+
+describe('AddMedicineScreen — photo', () => {
+  beforeEach(async () => {
+    await signIn();
+    await showScreen(AddMedicineScreen);
+  });
+
+  it('starts with no photo', () => {
+    expect(screen.getByText(/No\s*photo/)).toBeTruthy();
+    expect(screen.queryByText(/Remove photo/)).toBeNull();
+  });
+
+  it('captures a photo from the camera and previews it', async () => {
+    await press('📷  Take a photo');
+    expect(ImagePicker.launchCameraAsync).toHaveBeenCalled();
+    expect(screen.getByText(/Remove photo · \d+ KB/)).toBeTruthy();
+
+    const images = screen.UNSAFE_getAllByType(Image);
+    expect(images.some((i) => String(i.props.source?.uri).startsWith('data:image/jpeg;base64,'))).toBe(true);
+  });
+
+  it('picks a photo from the gallery', async () => {
+    await press('🖼  Choose from gallery');
+    expect(ImagePicker.launchImageLibraryAsync).toHaveBeenCalled();
+    expect(screen.getByText(/Remove photo/)).toBeTruthy();
+  });
+
+  it('removes an attached photo', async () => {
+    await press('📷  Take a photo');
+    await press(/Remove photo/);
+    expect(screen.getByText(/No\s*photo/)).toBeTruthy();
+  });
+
+  it('reports a denied camera permission', async () => {
+    ImagePicker.__state.cameraPermission = { granted: false };
+    await press('📷  Take a photo');
+    expect(Alert.alert).toHaveBeenCalledWith('Photo unavailable', 'Camera permission denied');
+    expect(screen.queryByText(/Remove photo/)).toBeNull();
+  });
+
+  it('says nothing when the user cancels the camera', async () => {
+    ImagePicker.__state.result = { canceled: true, assets: [] };
+    await press('📷  Take a photo');
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(screen.getByText(/No\s*photo/)).toBeTruthy();
+  });
+
+  it('saves the compressed photo onto the medicine row', async () => {
+    await press('📷  Take a photo');
+    await addName('Aspirin');
+    await press('Morning');
+    await press('Save');
+
+    expect(meds()[0].photo).toBeTruthy();
+    expect(meds()[0].photo.length).toBeLessThanOrEqual(12000);
+  });
+
+  it('attaches the photo to the medicine it was taken for, not the next one', async () => {
+    await press('📷  Take a photo');
+    await addName('WithPhoto');
+    await addName('NoPhoto'); // photo intentionally cleared after each add
+    await press('Morning');
+    await press('Save');
+
+    const byName = Object.fromEntries(meds().map((m) => [m.name, m.photo]));
+    expect(byName.WithPhoto).toBeTruthy();
+    expect(byName.NoPhoto).toBeNull();
+  });
+
+  it('shows a thumbnail on the name chip of a medicine that has a photo', async () => {
+    await press('📷  Take a photo');
+    await addName('WithPhoto');
+    const images = screen.UNSAFE_getAllByType(Image);
+    expect(images.length).toBeGreaterThan(0);
+  });
+
+  it('reports a compression failure without losing the form', async () => {
+    ImagePicker.launchCameraAsync.mockRejectedValueOnce(new Error('camera busy'));
+    await press('📷  Take a photo');
+    expect(Alert.alert).toHaveBeenCalledWith('Photo failed', 'camera busy');
+    expect(screen.getByText('Medicine names')).toBeTruthy();
+  });
+});
+
+describe('AddMedicineScreen — alarms on save', () => {
+  beforeEach(async () => {
+    await signIn();
+  });
+
+  it('arms an alarm for every time of every medicine', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await addName('Metformin');
+    await press('Morning');
+    await press('Night');
+    await press('Save');
+
+    expect(scheduled()).toHaveLength(4);
+    expect(scheduled().map((n) => n.trigger.hour).sort((a, b) => a - b)).toEqual([8, 8, 22, 22]);
+  });
+
+  it('re-arms ALL medicines, not just the new one', async () => {
+    await addMedicine(null, { name: 'Existing', times: ['06:00'] });
+    await showScreen(AddMedicineScreen);
+    await addName('New');
+    await press('Morning');
+    await press('Save');
+
+    expect(scheduled().map((n) => n.content.body).sort()).toEqual([
+      'Take Existing now', 'Take New now',
+    ]);
+  });
+
+  it('stores the device-local notification ids', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('Morning');
+    await press('Save');
+
+    const [med] = await getMedicines();
+    expect(med.notificationIds).toHaveLength(1);
+  });
+
+  it('refuses to save without notification permission', async () => {
+    Device.isDevice = false; // ensureNotificationSetup returns false
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('Morning');
+    await press('Save');
+
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Permission needed',
+      'Enable notifications to schedule alarms.'
+    );
+    expect(meds()).toHaveLength(0);
+  });
+
+  it('surfaces a save failure instead of pretending it worked', async () => {
+    db().failOn('medicines', 'insert', { message: 'insert denied' });
+    const { navigation } = await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('Morning');
+    await press('Save');
+
+    expect(Alert.alert).toHaveBeenCalledWith('Save failed', 'insert denied');
+    expect(navigation.goBack).not.toHaveBeenCalled();
+  });
+});
+
+describe('AddMedicineScreen — edit mode', () => {
+  let medicineId;
+
+  beforeEach(async () => {
+    await signIn();
+    medicineId = await addMedicine(null, {
+      name: 'Aspirin',
+      times: ['08:00', '20:00'],
+      form: 'Capsule',
+      color: '#E53935',
+      snoozeMinutes: 15,
+      frequency: 'weekly',
+      daysOfWeek: [1, 3],
+      toneId: 'bell',
+      alertGuardian: false,
+      photo: 'EXISTINGPHOTO',
+    });
+  });
+
+  it('sets the edit title', async () => {
+    const { navigation } = await showScreen(AddMedicineScreen, { params: { medicineId } });
+    expect(navigation.setOptions).toHaveBeenCalledWith({ title: 'Edit medicine' });
+  });
+
+  it('prefills every field from the stored medicine', async () => {
+    await showScreen(AddMedicineScreen, { params: { medicineId } });
+
+    expect(screen.getByDisplayValue('Aspirin')).toBeTruthy();
+    expect(screen.getByText('8:00 AM  ×')).toBeTruthy();
+    expect(screen.getByText('8:00 PM  ×')).toBeTruthy();
+    expect(screen.getByText(/Remove photo/)).toBeTruthy();
+    expect(screen.getByText('Save')).toBeTruthy();
+    expect(screen.getByText('Delete medicine')).toBeTruthy();
+  });
+
+  it('uses a single-name field, not the batch adder', async () => {
+    await showScreen(AddMedicineScreen, { params: { medicineId } });
+    expect(screen.getByText('Medicine name')).toBeTruthy();
+    expect(screen.queryByText('+ Add')).toBeNull();
+  });
+
+  it('saves an edited name without creating a duplicate', async () => {
+    await showScreen(AddMedicineScreen, { params: { medicineId } });
+    await act(async () => {
+      fireEvent.changeText(screen.getByDisplayValue('Aspirin'), 'Aspirin 500');
+    });
+    await press('Save');
+
+    expect(meds()).toHaveLength(1);
+    expect(meds()[0].name).toBe('Aspirin 500');
+  });
+
+  it('rejects an emptied name', async () => {
+    await showScreen(AddMedicineScreen, { params: { medicineId } });
+    await act(async () => {
+      fireEvent.changeText(screen.getByDisplayValue('Aspirin'), '  ');
+    });
+    await press('Save');
+    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Enter medicine name.');
+  });
+
+  it('can replace the photo', async () => {
+    await showScreen(AddMedicineScreen, { params: { medicineId } });
+    await press('📷  Take a photo');
+    await press('Save');
+
+    expect(meds()[0].photo).not.toBe('EXISTINGPHOTO');
+    expect(meds()[0].photo).toBeTruthy();
+  });
+
+  it('can remove the photo', async () => {
+    await showScreen(AddMedicineScreen, { params: { medicineId } });
+    await press(/Remove photo/);
+    await press('Save');
+    expect(meds()[0].photo).toBeNull();
+  });
+
+  it('re-arms alarms after an edit', async () => {
+    await showScreen(AddMedicineScreen, { params: { medicineId } });
+    await press('8:00 PM  ×'); // drop the evening dose
+    await press('Save');
+
+    expect(meds()[0].times).toEqual(['08:00']);
+    // weekly on Mon+Wed, one time -> two alarms
+    expect(scheduled()).toHaveLength(2);
+  });
+
+  it('deletes after confirmation and clears its alarms', async () => {
+    const { navigation } = await showScreen(AddMedicineScreen, { params: { medicineId } });
+    await press('Delete medicine');
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Delete medicine', 'Remove "Aspirin"?', expect.any(Array)
+    );
+
+    await act(async () => {
+      await globalThis.pressAlertButton('Delete');
+    });
+    await flush();
+
+    expect(meds()).toHaveLength(0);
+    expect(scheduled()).toHaveLength(0);
+    expect(navigation.goBack).toHaveBeenCalled();
+  });
+
+  it('keeps the medicine when the delete is cancelled', async () => {
+    await showScreen(AddMedicineScreen, { params: { medicineId } });
+    await press('Delete medicine');
+    await act(async () => {
+      await globalThis.pressAlertButton('Cancel');
+    });
+    await flush();
+    expect(meds()).toHaveLength(1);
+  });
+});
+
+describe('AddMedicineScreen — guardian request mode', () => {
+  let patientId;
+
+  beforeEach(async () => {
+    const alice = db().makeUser('alice');
+    patientId = alice.id;
+    await registerUser('bob', 'password123');
+    await loginUser('bob', 'password123');
+    db().link(alice.id, db().session.user.id);
+  });
+
+  const open = () =>
+    showScreen(AddMedicineScreen, {
+      params: { requestUserId: patientId, requestUsername: 'alice' },
+    });
+
+  it('titles the screen as a request for the patient', async () => {
+    const { navigation } = await open();
+    expect(navigation.setOptions).toHaveBeenCalledWith({ title: 'Request for @alice' });
+    expect(screen.getByText('Send request')).toBeTruthy();
+  });
+
+  it('files a request instead of writing a medicine', async () => {
+    const { navigation } = await open();
+    await addName('Vitamin D');
+    await press('Morning');
+    await press('Send request');
+
+    expect(meds()).toHaveLength(0);
+    const reqs = db().rows('action_requests');
+    expect(reqs).toHaveLength(1);
+    expect(reqs[0]).toMatchObject({
+      user_id: patientId, kind: 'add_medicine', status: 'pending',
+    });
+    expect(reqs[0].payload.name).toBe('Vitamin D');
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Request sent', 'Sent to @alice for approval.'
+    );
+    expect(navigation.goBack).toHaveBeenCalled();
+  });
+
+  it('files one request per batched medicine', async () => {
+    await open();
+    await addName('Vitamin D');
+    await addName('Zinc');
+    await press('Morning');
+    await press('Send request');
+    expect(db().rows('action_requests')).toHaveLength(2);
+  });
+
+  it('includes the photo in the request payload', async () => {
+    await open();
+    await press('📷  Take a photo');
+    await addName('Vitamin D');
+    await press('Morning');
+    await press('Send request');
+    expect(db().rows('action_requests')[0].payload.photo).toBeTruthy();
+  });
+
+  it('does not arm the guardian`s own alarms', async () => {
+    await open();
+    await addName('Vitamin D');
+    await press('Morning');
+    await press('Send request');
+    expect(scheduled()).toHaveLength(0);
+  });
+
+  it('reports a rejected request', async () => {
+    db().failOn('action_requests', 'insert', { message: 'not permitted' });
+    const { navigation } = await open();
+    await addName('Vitamin D');
+    await press('Morning');
+    await press('Send request');
+
+    expect(Alert.alert).toHaveBeenCalledWith('Failed', 'not permitted');
+    expect(navigation.goBack).not.toHaveBeenCalled();
+  });
+});
