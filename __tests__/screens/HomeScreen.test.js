@@ -473,10 +473,12 @@ describe('HomeScreen — editing', () => {
     });
   });
 
+  // Report moved off the bar to make room for Calendar; it is now reached
+  // from the Calendar screen, so it is still one tap from here.
   it.each([
     ['Add', 'AddMedicine'],
+    ['Calendar', 'Calendar'],
     ['Trackers', 'Trackers'],
-    ['Report', 'HealthReport'],
     ['Settings', 'Settings'],
   ])('the bottom bar item "%s" opens %s', async (label, route) => {
     await signIn();

@@ -18,6 +18,7 @@ import GuardianUserScreen from './src/screens/GuardianUserScreen';
 import ApprovalsScreen from './src/screens/ApprovalsScreen';
 import TrackersScreen from './src/screens/TrackersScreen';
 import HealthReportScreen from './src/screens/HealthReportScreen';
+import CalendarScreen from './src/screens/CalendarScreen';
 import PlansScreen from './src/screens/PlansScreen';
 import { getSession, recordDose, getMedicines, pruneOldHistory } from './src/utils/storage';
 import {
@@ -217,6 +218,20 @@ export default function App() {
                 component={HealthReportScreen}
                 options={{ title: 'Health report' }}
               />
+              {/* Approvals used to be registered in the PATIENT stack only, so
+                  a guardian's navigate('Approvals') hit a route that did not
+                  exist and was silently dropped by the guard in this file —
+                  they could never see the requests they had raised. */}
+              <Stack.Screen
+                name="Approvals"
+                component={ApprovalsScreen}
+                options={{ title: 'Requests' }}
+              />
+              <Stack.Screen
+                name="Calendar"
+                component={CalendarScreen}
+                options={{ title: 'Adherence' }}
+              />
               <Stack.Screen
                 name="ProfileDetails"
                 component={ProfileDetailsScreen}
@@ -252,6 +267,11 @@ export default function App() {
                 name="Approvals"
                 component={ApprovalsScreen}
                 options={{ title: 'Guardian requests' }}
+              />
+              <Stack.Screen
+                name="Calendar"
+                component={CalendarScreen}
+                options={{ title: 'Adherence' }}
               />
               <Stack.Screen
                 name="Trackers"

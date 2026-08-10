@@ -10,8 +10,8 @@ import { colors } from '../theme';
 const ITEMS = [
   { key: 'Home', icon: '🏠', label: 'Home' },
   { key: 'AddMedicine', icon: '➕', label: 'Add' },
+  { key: 'Calendar', icon: '🗓', label: 'Calendar' },
   { key: 'Trackers', icon: '📊', label: 'Trackers' },
-  { key: 'HealthReport', icon: '📄', label: 'Report' },
   { key: 'Settings', icon: '⚙️', label: 'Settings' },
 ];
 
