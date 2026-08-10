@@ -719,3 +719,71 @@ describe('AddMedicineScreen — guardian request mode', () => {
     expect(navigation.goBack).not.toHaveBeenCalled();
   });
 });
+
+describe('AddMedicineScreen — course and dose count', () => {
+  it('fills in two times when "Twice" is chosen', async () => {
+    await showScreen(AddMedicineScreen);
+    await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
+    await press('Twice');
+    await press('Save');
+    expect(meds()[0].times).toEqual(['09:00', '21:00']);
+  });
+
+  it('lets the generated times still be changed', async () => {
+    await showScreen(AddMedicineScreen);
+    await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
+    await press('3 times');
+    expect(meds()).toHaveLength(0);
+    // A quick-add chip toggles, and "3 times" already includes 08:00 — so add
+    // one that is NOT in the generated set.
+    await press('Before lunch');
+    await press('Save');
+    expect(meds()[0].times).toEqual(['08:00', '12:30', '14:00', '20:00']);
+  });
+
+  it('is ongoing by default, with no end date', async () => {
+    await showScreen(AddMedicineScreen);
+    await typeInto('e.g. Paracetamol 500mg', 'Vitamin D');
+    await press('Morning');
+    await press('Save');
+    expect(meds()[0].end_date).toBeNull();
+  });
+
+  // The reported need: a doctor says "take it for 15 days".
+  it('stores a 15-day course as an inclusive date range', async () => {
+    await showScreen(AddMedicineScreen);
+    await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
+    await press('Morning');
+    await press('15 days');
+    await press('Save');
+
+    const row = meds()[0];
+    const from = new Date(`${row.start_date}T00:00:00`);
+    const to = new Date(`${row.end_date}T00:00:00`);
+    // Inclusive: day 1 and day 15 both count, so the gap is 14 days.
+    expect(Math.round((to - from) / 86400000)).toBe(14);
+  });
+
+  it('treats one week as seven days, not eight', async () => {
+    await showScreen(AddMedicineScreen);
+    await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
+    await press('Morning');
+    await press('1 week');
+    await press('Save');
+
+    const row = meds()[0];
+    const from = new Date(`${row.start_date}T00:00:00`);
+    const to = new Date(`${row.end_date}T00:00:00`);
+    expect(Math.round((to - from) / 86400000)).toBe(6);
+  });
+
+  it('can be switched back to ongoing, clearing the end date', async () => {
+    await showScreen(AddMedicineScreen);
+    await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
+    await press('Morning');
+    await press('10 days');
+    await press('Ongoing');
+    await press('Save');
+    expect(meds()[0].end_date).toBeNull();
+  });
+});

@@ -69,6 +69,7 @@ describe('medToRow', () => {
         toneId: 'bell',
         alertGuardian: false,
         photo: 'base64data',
+      end_date: null,
       },
       uid
     );
@@ -84,6 +85,9 @@ describe('medToRow', () => {
       tone_id: 'bell',
       alert_guardian: false,
       photo: 'base64data',
+      // Always sent, so making a medicine ongoing clears a previous end date
+      // rather than leaving a stale one behind.
+      end_date: null,
     });
   });
 
@@ -224,5 +228,34 @@ describe('todayKey', () => {
     jest.setSystemTime(new Date(2025, 0, 5, 12, 0, 0));
     expect(todayKey()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(todayKey()).toBe('2025-01-05');
+  });
+});
+
+describe('course dates round-trip', () => {
+  it('sends both dates when a course is set', () => {
+    const row = medToRow(
+      { name: 'Amoxil', startDate: '2026-08-05', endDate: '2026-08-19' },
+      'u1'
+    );
+    expect(row.start_date).toBe('2026-08-05');
+    expect(row.end_date).toBe('2026-08-19');
+  });
+
+  // Sending start_date: undefined would travel as a no-op key; omitting it
+  // lets the column default (today) apply.
+  it('omits start_date entirely when unset', () => {
+    expect('start_date' in medToRow({ name: 'X' }, 'u1')).toBe(false);
+  });
+
+  it('reads the dates back off a row', () => {
+    const med = rowToMed({
+      id: 'm1', name: 'X', times: [], start_date: '2026-08-05', end_date: '2026-08-19',
+    });
+    expect(med).toMatchObject({ startDate: '2026-08-05', endDate: '2026-08-19' });
+  });
+
+  it('reports an ongoing medicine as having no end', () => {
+    const med = rowToMed({ id: 'm1', name: 'X', times: [], end_date: null });
+    expect(med.endDate).toBeNull();
   });
 });

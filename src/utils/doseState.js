@@ -58,7 +58,45 @@ export function passedSlots(med, now) {
   return out.sort((a, b) => a.due - b.due);
 }
 
+// A plain YYYY-MM-DD comparison. Dates are stored as calendar days with no
+// time, so comparing them as strings is both correct and immune to the
+// timezone drift that Date arithmetic invites.
+function dayString(date) {
+  const d = new Date(date);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Whether a date falls inside the medicine's course. end_date is INCLUSIVE —
+// "take it for 7 days" means the seventh day counts.
+export function isWithinCourse(med, now = new Date()) {
+  const today = dayString(now);
+  if (med?.startDate && today < med.startDate) return false;
+  if (med?.endDate && today > med.endDate) return false;
+  return true;
+}
+
+// Days left including today, or null for an ongoing medicine. Negative never
+// happens — a finished course reports 0.
+export function daysRemaining(med, now = new Date()) {
+  if (!med?.endDate) return null;
+  const end = new Date(`${med.endDate}T00:00:00`);
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((end - today) / 86400000) + 1;
+  return Math.max(0, diff);
+}
+
+export function isCourseFinished(med, now = new Date()) {
+  return !!med?.endDate && dayString(now) > med.endDate;
+}
+
 export function isDueToday(med, now) {
+  // The course window gates everything: a finished medicine is due on no day,
+  // whatever its weekday schedule says. An alarm that keeps firing after the
+  // course ends teaches people to ignore alarms, which is the one habit this
+  // app cannot afford to build.
+  if (!isWithinCourse(med, now)) return false;
   const days =
     med.daysOfWeek && med.daysOfWeek.length
       ? med.daysOfWeek

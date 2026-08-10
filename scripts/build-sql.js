@@ -22,6 +22,7 @@ const ORDER = [
   'subscriptions.sql',
   'hardening.sql',
   'onboarding.sql',
+  'course.sql',
 ];
 
 const HEADER = `-- PillReminder — every migration, in dependency order, as one script.
@@ -89,6 +90,11 @@ select 'SEC-03: profile column guard trigger',
 union all
 select 'SEC-04: pairing attempt log',
        case when to_regclass('public.pairing_attempts') is not null
+       then 'OK' else 'MISSING' end
+union all
+select 'medicines.end_date (course length)',
+       case when exists (select 1 from information_schema.columns
+         where table_name = 'medicines' and column_name = 'end_date')
        then 'OK' else 'MISSING' end
 union all
 select 'pg_cron enabled (retention jobs)',

@@ -125,6 +125,8 @@ export function rowToMed(r, notifMap = {}) {
     toneId: r.tone_id,
     alertGuardian: r.alert_guardian,
     photo: r.photo || null,
+    startDate: r.start_date || null,
+    endDate: r.end_date || null,
     notificationIds: notifMap[r.id] || [],
     createdAt: r.created_at,
   };
@@ -143,6 +145,12 @@ export function medToRow(med, uid) {
     tone_id: med.toneId || 'classic',
     alert_guardian: med.alertGuardian !== false,
     photo: med.photo || null,   // small base64 JPEG — see utils/photo.js
+    // Omitted rather than sent as undefined when unset, so the column default
+    // (today) applies instead of the key travelling as a no-op.
+    ...(med.startDate ? { start_date: med.startDate } : {}),
+    // null, explicitly: making a medicine ongoing must CLEAR any previous end
+    // date rather than leave a stale one behind.
+    end_date: med.endDate ?? null,
   };
   // Only include id if it's a real DB uuid (edits); new meds let DB generate it.
   if (med.id && /^[0-9a-f-]{36}$/i.test(med.id)) row.id = med.id;

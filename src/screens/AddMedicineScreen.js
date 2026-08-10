@@ -63,6 +63,40 @@ const FORM_OPTIONS = MED_FORMS;
 
 
 
+// "Twice a day" is how a prescription is written and how people think, so it
+// is offered as a starting point that fills in sensible times. They stay fully
+// editable afterwards — this sets the times, it does not lock them.
+const DOSES_PER_DAY = [
+  { n: 1, label: 'Once', times: ['09:00'] },
+  { n: 2, label: 'Twice', times: ['09:00', '21:00'] },
+  { n: 3, label: '3 times', times: ['08:00', '14:00', '20:00'] },
+  { n: 4, label: '4 times', times: ['08:00', '12:00', '16:00', '20:00'] },
+];
+
+// A course length, as a doctor states it. `days` null means ongoing.
+const DURATIONS = [
+  { days: null, label: 'Ongoing' },
+  { days: 3, label: '3 days' },
+  { days: 5, label: '5 days' },
+  { days: 7, label: '1 week' },
+  { days: 10, label: '10 days' },
+  { days: 15, label: '15 days' },
+  { days: 30, label: '1 month' },
+];
+
+function todayISO() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function addDaysISO(iso, days) {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 const QUICK_TIMES = [
   { label: 'Morning', time: '08:00' },
   { label: 'Before lunch', time: '12:30' },
@@ -92,6 +126,8 @@ export default function AddMedicineScreen({ route, navigation }) {
   const [times, setTimes] = useState([]);
   const [snoozeMinutes, setSnoozeMinutes] = useState(10);
   const [frequency, setFrequency] = useState('daily');
+  const [durationDays, setDurationDays] = useState(null); // null = ongoing
+  const [startDate, setStartDate] = useState(null);
   const [daysOfWeek, setDaysOfWeek] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerInitial, setPickerInitial] = useState({ hour: 8, minute: 0 });
@@ -130,6 +166,16 @@ export default function AddMedicineScreen({ route, navigation }) {
       setTimes(med.times || []);
       setSnoozeMinutes(med.snoozeMinutes || 10);
       setFrequency(med.frequency || 'daily');
+      setStartDate(med.startDate || null);
+      // Shown back as a length rather than a raw date: that is how it was
+      // entered, and how the prescription reads.
+      if (med.startDate && med.endDate) {
+        const from = new Date(`${med.startDate}T00:00:00`);
+        const to = new Date(`${med.endDate}T00:00:00`);
+        setDurationDays(Math.round((to - from) / 86400000) + 1);
+      } else {
+        setDurationDays(null);
+      }
       setDaysOfWeek(med.daysOfWeek || []);
       setOriginalNotifIds(med.notificationIds || []);
       setToneId(med.toneId || 'classic');
@@ -249,6 +295,13 @@ export default function AddMedicineScreen({ route, navigation }) {
 
     const sharedDays =
       frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
+
+    // Resolved to dates HERE, once, rather than stored as a length. A length
+    // has to be re-resolved against a start every time it is read, and any
+    // disagreement about which day is day 1 silently moves the end.
+    const courseStart = startDate || todayISO();
+    const courseEnd =
+      durationDays == null ? null : addDaysISO(courseStart, durationDays - 1);
     const buildDraft = (id, medName, medColor, medPhoto, medForm) => ({
       id,
       name: medName,
@@ -261,6 +314,8 @@ export default function AddMedicineScreen({ route, navigation }) {
       alertGuardian,
       color: medColor || '#FFFFFF',
       photo: medPhoto || null,
+      startDate: courseStart,
+      endDate: courseEnd,
     });
 
     // Guardian request mode: send each medicine as an approval request.
@@ -526,6 +581,56 @@ export default function AddMedicineScreen({ route, navigation }) {
             </TouchableOpacity>
           ) : null}
         </View>
+      </View>
+
+      <Text style={styles.label}>How many times a day?</Text>
+      <Text style={styles.nameHint}>
+        Sets the times below — you can still change any of them.
+      </Text>
+      <View style={styles.timesWrap}>
+        {DOSES_PER_DAY.map((d) => {
+          const on = times.length === d.n;
+          return (
+            <TouchableOpacity
+              key={d.n}
+              style={[styles.quickChip, on && styles.quickChipOn]}
+              onPress={() => setTimes(d.times)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+            >
+              <Text style={[styles.quickChipText, on && styles.quickChipTextOn]}>
+                {d.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <Text style={styles.label}>How long?</Text>
+      <Text style={styles.nameHint}>
+        {durationDays == null
+          ? 'Ongoing — no planned end date.'
+          : `${durationDays} days, ending ${new Date(
+              addDaysISO(startDate || todayISO(), durationDays - 1) + 'T00:00:00'
+            ).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}. Alarms stop by themselves.`}
+      </Text>
+      <View style={styles.timesWrap}>
+        {DURATIONS.map((d) => {
+          const on = durationDays === d.days;
+          return (
+            <TouchableOpacity
+              key={String(d.days)}
+              style={[styles.quickChip, on && styles.quickChipOn]}
+              onPress={() => setDurationDays(d.days)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+            >
+              <Text style={[styles.quickChipText, on && styles.quickChipTextOn]}>
+                {d.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <Text style={styles.label}>Times</Text>
