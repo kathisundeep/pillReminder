@@ -141,11 +141,63 @@ describe('AddMedicineScreen — create mode', () => {
 
   it('records the chosen medicine type', async () => {
     await showScreen(AddMedicineScreen);
-    await addName('Cough syrup');
+    // The form is captured when the name is added, so it is chosen first.
     await press(/Syrup/);
+    await addName('Cough syrup');
     await press('Morning');
     await press('Save');
     expect(meds()[0].form).toBe('Syrup');
+  });
+
+  it('applies the type to a name still sitting in the input', async () => {
+    // The common single-medicine path: type a name, pick a type, save —
+    // without ever pressing Add.
+    await showScreen(AddMedicineScreen);
+    await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
+    await press(/Capsule/);
+    await press('Morning');
+    await press('Save');
+    expect(meds()[0]).toMatchObject({ name: 'Amoxil', form: 'Capsule' });
+  });
+
+  // The reported bug: adding a tablet, a capsule and a syrup to one schedule
+  // saved three of whichever type happened to be selected last.
+  it('keeps a different type for each medicine in one batch', async () => {
+    await showScreen(AddMedicineScreen);
+
+    await press(/Tablet/);
+    await addName('Aspirin');
+    await press(/Capsule/);
+    await addName('Amoxil');
+    await press(/Syrup/);
+    await addName('Benadryl');
+
+    await press('Morning');
+    await press('Save');
+
+    const saved = Object.fromEntries(meds().map((m) => [m.name, m.form]));
+    expect(saved).toEqual({
+      Aspirin: 'Tablet',
+      Amoxil: 'Capsule',
+      Benadryl: 'Syrup',
+    });
+  });
+
+  it('keeps a different colour for each medicine in one batch', async () => {
+    await showScreen(AddMedicineScreen);
+    const swatches = screen.getAllByLabelText(/Tablet$/);
+    await press(swatches[1]);
+    await addName('Aspirin');
+    const later = screen.getAllByLabelText(/Tablet$/);
+    await press(later[3]);
+    await addName('Ibuprofen');
+    await press('Morning');
+    await press('Save');
+
+    const [a, b] = ['Aspirin', 'Ibuprofen'].map(
+      (n) => meds().find((m) => m.name === n).color
+    );
+    expect(a).not.toBe(b);
   });
 
   it('previews the colour swatches using the selected form`s icon', async () => {

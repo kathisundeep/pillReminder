@@ -181,12 +181,16 @@ export function statusStyle(state) {
 // Kept here so the Add screen, the Home list, the alarm and the guardian view
 // can never disagree about what a given medicine looks like.
 // ---------------------------------------------------------------------------
+// Forms are DRAWN by src/components/MedIcon.js, not shown as emoji. There is
+// no `icon` here on purpose: 💊 was used for both Tablet and Capsule, which
+// made the two indistinguishable, and an emoji cannot take the medicine's
+// colour — the colour could only appear as a dot beside it.
 export const MED_FORMS = [
-  { id: 'Tablet', label: 'Tablet', icon: '💊' },
-  { id: 'Capsule', label: 'Capsule', icon: '💊' },
-  { id: 'Syrup', label: 'Syrup', icon: '🧪' },
-  { id: 'Injection', label: 'Injection', icon: '💉' },
-  { id: 'Drops', label: 'Drops', icon: '💧' },
+  { id: 'Tablet', label: 'Tablet' },
+  { id: 'Capsule', label: 'Capsule' },
+  { id: 'Syrup', label: 'Syrup' },
+  { id: 'Injection', label: 'Injection' },
+  { id: 'Drops', label: 'Drops' },
 ];
 
 export function formFor(id) {
@@ -212,4 +216,56 @@ export function tintFor(hex) {
     '#c084fc': '#faf5ff',
   };
   return (found && soft[found.hex]) || colors.cardSubtle;
+}
+
+// ---------------------------------------------------------------------------
+// Colour maths for the medicine icons
+//
+// The icons are drawn rather than emoji, so they need a darker edge and a
+// readable detail colour derived from whatever the user picked — including
+// white, which is a common real choice for a tablet and needs an outline to be
+// visible at all against a white card.
+// ---------------------------------------------------------------------------
+
+function parseHex(hex) {
+  const s = String(hex || '').replace('#', '');
+  const full = s.length === 3 ? s.split('').map((c) => c + c).join('') : s;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
+  return {
+    r: parseInt(full.slice(0, 2), 16),
+    g: parseInt(full.slice(2, 4), 16),
+    b: parseInt(full.slice(4, 6), 16),
+  };
+}
+
+// amount > 0 lightens toward white, < 0 darkens toward black.
+export function shade(hex, amount) {
+  const rgb = parseHex(hex) || { r: 148, g: 163, b: 184 };
+  const mix = (c) =>
+    Math.round(amount >= 0 ? c + (255 - c) * amount : c * (1 + amount));
+  const hh = (c) => Math.max(0, Math.min(255, mix(c))).toString(16).padStart(2, '0');
+  return `#${hh(rgb.r)}${hh(rgb.g)}${hh(rgb.b)}`;
+}
+
+// Perceived brightness (ITU-R BT.601). Used to decide whether details drawn on
+// top of the colour should be dark or light.
+export function luminance(hex) {
+  const rgb = parseHex(hex);
+  if (!rgb) return 1;
+  return (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000 / 255;
+}
+
+export function isLight(hex) {
+  return luminance(hex) > 0.65;
+}
+
+// A border that stays visible whatever the fill is: a white tablet gets a grey
+// edge, a dark one gets a slightly darker edge rather than a black halo.
+export function edgeFor(hex) {
+  return isLight(hex) ? shade(hex, -0.22) : shade(hex, -0.3);
+}
+
+// For score lines, capsule seams and syringe markings.
+export function detailFor(hex) {
+  return isLight(hex) ? shade(hex, -0.45) : shade(hex, 0.6);
 }

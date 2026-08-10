@@ -122,7 +122,8 @@ describe('AlarmScreen — presentation', () => {
       name: 'Aspirin', times: ['08:00'], form: 'Tablet',
     });
     await showScreen(AlarmScreen, { params: { medicineId: id, medicineName: 'Aspirin' } });
-    expect(screen.getByText('💊')).toBeTruthy();
+    // Drawn shapes now, not an emoji: 💊 stood for both Tablet and Capsule.
+    expect(screen.getByTestId('med-icon-Tablet')).toBeTruthy();
   });
 
   it('shows the photo from the offline cache when the network is down', async () => {

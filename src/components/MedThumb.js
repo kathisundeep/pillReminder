@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Image, StyleSheet } from 'react-native';
 import { photoUri } from '../utils/photo';
-import { colors, radius, formFor, tintFor } from '../theme';
+import MedIcon from './MedIcon';
+import { colors, radius, tintFor } from '../theme';
 
 // How a medicine is represented everywhere: its photo if there is one,
 // otherwise the icon for its FORM washed in its chosen colour.
@@ -25,7 +26,9 @@ export default function MedThumb({ med, size = 48 }) {
     );
   }
 
-  const form = formFor(med?.form);
+  // The icon itself now carries the colour, so the corner dot that used to
+  // stand in for it is gone — it was showing the colour NEXT TO the medicine
+  // rather than ON it, which is not how anyone thinks about "the blue one".
   return (
     <View
       style={[
@@ -34,13 +37,7 @@ export default function MedThumb({ med, size = 48 }) {
         { backgroundColor: tintFor(med?.color), borderColor: colors.border },
       ]}
     >
-      <Text style={{ fontSize: size * 0.44 }}>{form.icon}</Text>
-      <View
-        style={[
-          styles.colorDot,
-          { backgroundColor: med?.color || colors.border },
-        ]}
-      />
+      <MedIcon form={med?.form} color={med?.color} size={size * 0.56} />
     </View>
   );
 }
@@ -52,15 +49,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardSubtle,
     borderWidth: 1,
     borderColor: colors.border,
-  },
-  colorDot: {
-    position: 'absolute',
-    right: 3,
-    bottom: 3,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    borderWidth: 1.5,
-    borderColor: colors.surface,
   },
 });

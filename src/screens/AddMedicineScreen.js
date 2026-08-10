@@ -26,6 +26,7 @@ import {
 import { Audio } from 'expo-av';
 import WheelTimePicker from '../components/WheelTimePicker';
 import DaysSelector from '../components/DaysSelector';
+import MedIcon from '../components/MedIcon';
 import { createAddMedicineRequest } from '../utils/guardianCloud';
 import { notifyPatientOfRequest } from '../utils/guardian';
 import {
@@ -195,7 +196,13 @@ export default function AddMedicineScreen({ route, navigation }) {
     const n = nameInput.trim();
     if (!n) return;
     if (!names.some((x) => x.name === n))
-      setNames([...names, { name: n, color: color || '#FFFFFF', photo }]);
+      setNames([
+        ...names,
+        // The form is captured PER medicine. It used to be read from state at
+        // save time, so adding a tablet, a capsule and a syrup to one schedule
+        // saved three of whatever was selected last.
+        { name: n, form: form || 'Tablet', color: color || '#FFFFFF', photo },
+      ]);
     setNameInput('');
     // A photo belongs to one specific medicine, so don't carry it over to the
     // next one added to this schedule (the colour intentionally does carry).
@@ -226,12 +233,12 @@ export default function AddMedicineScreen({ route, navigation }) {
     let entries; // [{ name, color, photo }]
     if (isEdit) {
       if (!name.trim()) return Alert.alert('Missing', 'Enter medicine name.');
-      entries = [{ name: name.trim(), color: color || '#FFFFFF', photo }];
+      entries = [{ name: name.trim(), form: form || 'Tablet', color: color || '#FFFFFF', photo }];
     } else {
       const pending = nameInput.trim();
       entries = [...names];
       if (pending && !entries.some((e) => e.name === pending))
-        entries.push({ name: pending, color: color || '#FFFFFF', photo });
+        entries.push({ name: pending, form: form || 'Tablet', color: color || '#FFFFFF', photo });
       if (entries.length === 0)
         return Alert.alert('Missing', 'Add at least one medicine name.');
     }
@@ -242,10 +249,10 @@ export default function AddMedicineScreen({ route, navigation }) {
 
     const sharedDays =
       frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
-    const buildDraft = (id, medName, medColor, medPhoto) => ({
+    const buildDraft = (id, medName, medColor, medPhoto, medForm) => ({
       id,
       name: medName,
-      form: form || 'Tablet',
+      form: medForm || form || 'Tablet',
       times,
       snoozeMinutes,
       frequency,
@@ -263,7 +270,7 @@ export default function AddMedicineScreen({ route, navigation }) {
         for (const e of entries) {
           const res = await createAddMedicineRequest(
             requestUserId,
-            buildDraft(undefined, e.name, e.color, e.photo)
+            buildDraft(undefined, e.name, e.color, e.photo, e.form)
           );
           if (!res.ok) throw new Error(res.error || 'request failed');
           // Tell them now rather than whenever they next open the app.
@@ -304,7 +311,8 @@ export default function AddMedicineScreen({ route, navigation }) {
             editingId,
             entries[0].name,
             entries[0].color,
-            entries[0].photo
+            entries[0].photo,
+            entries[0].form
           )
         );
       } else {
@@ -313,7 +321,7 @@ export default function AddMedicineScreen({ route, navigation }) {
           const id = `${Date.now()}_${i}_${Math.random()
             .toString(36)
             .slice(2, 7)}`;
-          await addMedicine(user, buildDraft(id, e.name, e.color, e.photo));
+          await addMedicine(user, buildDraft(id, e.name, e.color, e.photo, e.form));
           i += 1;
         }
       }
@@ -395,9 +403,12 @@ export default function AddMedicineScreen({ route, navigation }) {
                       style={styles.nameChipPhoto}
                     />
                   ) : null}
-                  <View
-                    style={[styles.nameChipDot, { backgroundColor: n.color }]}
-                  />
+                  {/* The chip shows the form it was added with, so a batch of
+                      three medicines visibly reads as tablet / capsule / syrup
+                      rather than as three identical names. */}
+                  {!n.photo ? (
+                    <MedIcon form={n.form} color={n.color} size={16} />
+                  ) : null}
                   <Text style={styles.nameChipText}>{n.name}  ×</Text>
                 </TouchableOpacity>
               ))}
@@ -430,9 +441,12 @@ export default function AddMedicineScreen({ route, navigation }) {
               style={[styles.quickChip, on && styles.quickChipOn]}
               onPress={() => setForm(f.id)}
             >
-              <Text style={[styles.quickChipText, on && styles.quickChipTextOn]}>
-                {f.icon}  {f.label}
-              </Text>
+              <View style={styles.formChipInner}>
+                <MedIcon form={f.id} color={color || '#FFFFFF'} size={18} />
+                <Text style={[styles.quickChipText, on && styles.quickChipTextOn]}>
+                  {f.label}
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
@@ -465,7 +479,7 @@ export default function AddMedicineScreen({ route, navigation }) {
                   selected && styles.colorSwatchSelected,
                 ]}
               >
-                <Text style={styles.colorGlyph}>{formFor(form).icon}</Text>
+                <MedIcon form={form} color={c.hex} size={22} />
               </View>
               <Text style={styles.colorName}>{c.name}</Text>
             </TouchableOpacity>
@@ -887,6 +901,7 @@ const styles = StyleSheet.create({
     borderColor: theme.heading,
     transform: [{ scale: 1.08 }],
   },
+  formChipInner: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   colorGlyph: { fontSize: 20 },
   colorName: { fontSize: 11, color: theme.muted, marginTop: 5, fontWeight: '600' },
   timesWrap: { flexDirection: 'row', flexWrap: 'wrap' },
