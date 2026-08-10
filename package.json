@@ -17,7 +17,9 @@
     "fn:deploy": "npx -y supabase@latest functions deploy send-otp verify-otp create-account --project-ref accxqbtukprszgwroorq",
     "fn:check": "node scripts/check-functions.js",
     "fn:login": "npx -y supabase@latest login",
-    "fn:logs": "echo \"Function logs are dashboard-only (the CLI has no logs command):\" && echo \"  https://supabase.com/dashboard/project/accxqbtukprszgwroorq/functions/send-otp/logs\""
+    "fn:logs": "echo \"Function logs are dashboard-only (the CLI has no logs command):\" && echo \"  https://supabase.com/dashboard/project/accxqbtukprszgwroorq/functions/send-otp/logs\"",
+    "bump": "node scripts/bump-version.js",
+    "version": "node scripts/bump-version.js --show"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "1.23.1",

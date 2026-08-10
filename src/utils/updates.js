@@ -50,6 +50,14 @@ export function runningUpdate() {
   };
 }
 
+// One short human-readable label for what is running, e.g. "v0.0.1 · as
+// installed" or "v0.0.1 · 019feb70". Shown on the login screen and in
+// Settings, so both say the same thing in the same words.
+export function buildLabel(version) {
+  const info = runningUpdate();
+  return `v${version} · ${info.embedded ? 'as installed' : info.short}`;
+}
+
 // Returns one of: 'disabled' | 'held' | 'busy' | 'none' | 'applied' | 'failed'.
 // Never throws — a failed update check must not take the app down with it.
 export async function applyUpdateIfAny({ reload = true } = {}) {

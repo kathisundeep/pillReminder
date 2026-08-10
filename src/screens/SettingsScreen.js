@@ -15,7 +15,7 @@ import {
 import { getMyDetails } from '../utils/profile';
 import { logoutUser } from '../utils/storage';
 import { clearStoredRole, useRole, ROLES } from '../utils/role';
-import { applyUpdateIfAny, runningUpdate } from '../utils/updates';
+import { applyUpdateIfAny, buildLabel } from '../utils/updates';
 import { colors } from '../theme';
 
 const appVersion = require('../../app.json').expo.version;
@@ -34,7 +34,7 @@ export default function SettingsScreen({ navigation }) {
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(true);
   const [updateNote, setUpdateNote] = useState(null);
-  const [build] = useState(() => runningUpdate());
+  const [build] = useState(() => buildLabel(appVersion));
 
   const load = useCallback(async () => {
     setDetails(await getMyDetails());
@@ -217,8 +217,7 @@ export default function SettingsScreen({ navigation }) {
             tell an update that failed to apply from a change that did not
             work — the two look identical from the outside. */}
         <Text style={styles.build} onPress={onCheckForUpdate} accessibilityRole="button">
-          {`Version ${appVersion} · ${build.short}`}
-          {build.embedded ? ' (as installed)' : ''}
+          {build}
           {'\n'}
           {updateNote || 'Tap to check for updates'}
         </Text>

@@ -4,6 +4,7 @@ import {
   holdUpdates,
   updatesHeld,
   runningUpdate,
+  buildLabel,
 } from '../../src/utils/updates';
 
 const state = Updates.__state;
@@ -146,5 +147,17 @@ describe('runningUpdate', () => {
     expect(info.short).toBe('69f215f0');
     expect(info.runtimeVersion).toBe('1.1.0');
     expect(info.channel).toBe('preview');
+  });
+});
+
+describe('buildLabel', () => {
+  it('names an APK with nothing applied as installed, without repeating itself', () => {
+    reset({ isEmbeddedLaunch: true, updateId: null });
+    expect(buildLabel('0.0.1')).toBe('v0.0.1 · as installed');
+  });
+
+  it('shows the short update id once one is applied', () => {
+    reset({ isEmbeddedLaunch: false, updateId: '019feb70-9bba-77c6-973e-46a06fb00425' });
+    expect(buildLabel('0.0.2')).toBe('v0.0.2 · 019feb70');
   });
 });

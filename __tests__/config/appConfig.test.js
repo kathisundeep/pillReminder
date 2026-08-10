@@ -122,18 +122,35 @@ describe('over-the-air updates', () => {
     expect(expo.updates.url).toContain(expo.extra.eas.projectId);
   });
 
-  it('ties the runtime version to the app version', () => {
-    // With the appVersion policy, bumping expo.version starts a NEW runtime
-    // version: existing installs stop receiving `eas update` for the old one
-    // and need a fresh binary. See docs/audit-report.md — REL-01.
-    expect(expo.runtimeVersion).toEqual({ policy: 'appVersion' });
+  // This used to assert { policy: 'appVersion' }, which derived the runtime
+  // version from expo.version. That is the safe default when the version moves
+  // only at releases — but the version is now a change counter that moves on
+  // every edit, and under that policy every bump would start a new runtime,
+  // strand every installed app, and demand a fresh APK. So the two are
+  // deliberately separated.
+  it('pins the runtime version instead of deriving it from the app version', () => {
+    expect(typeof expo.runtimeVersion).toBe('string');
+    expect(expo.runtimeVersion).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it('keeps the app version and Android versionCode in step', () => {
-    // 1.0.0 -> versionCode 3, 1.1.0 -> versionCode 4. A version bump without a
-    // versionCode bump cannot be uploaded to Play.
-    expect(expo.version).toBe('1.1.0');
-    expect(expo.android.versionCode).toBe(4);
+  it('keeps the runtime version matching the APK already in the field', () => {
+    // Change this ONLY alongside a new native build. Every phone carrying the
+    // app asks for this exact string; changing it here without shipping a
+    // binary that reports the same value cuts them off from updates silently.
+    expect(expo.runtimeVersion).toBe('1.1.0');
+  });
+
+  it('lets the app version move independently of the runtime version', () => {
+    expect(expo.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(expo.version).not.toBe(expo.runtimeVersion);
+  });
+
+  it('has a Play-acceptable versionCode', () => {
+    // Google Play rejects an upload whose versionCode is not strictly higher
+    // than the previous one, so it only ever counts up — it does not track the
+    // displayed version, which wraps at 99.
+    expect(Number.isInteger(expo.android.versionCode)).toBe(true);
+    expect(expo.android.versionCode).toBeGreaterThanOrEqual(4);
   });
 });
 
