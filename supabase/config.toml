@@ -1,0 +1,23 @@
+project_id = "accxqbtukprszgwroorq"
+
+# These three run BEFORE the caller has an account — they are how an account
+# comes to exist. With JWT verification on, Supabase rejects every caller as
+# unauthenticated and registration can never complete.
+#
+# Setting it here rather than passing --no-verify-jwt means a future deploy
+# cannot silently re-enable it by leaving the flag off.
+#
+# They are not unauthenticated in the sense of unprotected. Each validates its
+# own input, rate limits by number and by IP, and create-account additionally
+# requires a claim token that only a consumed phone verification can produce —
+# so a verified number cannot be swapped for an unverified one at the last step.
+# See supabase/functions/_shared/otp.ts.
+
+[functions.send-otp]
+verify_jwt = false
+
+[functions.verify-otp]
+verify_jwt = false
+
+[functions.create-account]
+verify_jwt = false

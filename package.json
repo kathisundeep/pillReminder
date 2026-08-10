@@ -13,7 +13,11 @@
     "verify": "jest --selectProjects unit --coverage",
     "qr": "node scripts/make-qr.js",
     "release:apk": "node scripts/release-apk.js",
-    "sql": "node scripts/build-sql.js"
+    "sql": "node scripts/build-sql.js",
+    "fn:deploy": "npx -y supabase@latest functions deploy send-otp verify-otp create-account --project-ref accxqbtukprszgwroorq",
+    "fn:check": "node scripts/check-functions.js",
+    "fn:login": "npx -y supabase@latest login",
+    "fn:logs": "npx -y supabase@latest functions logs send-otp --project-ref accxqbtukprszgwroorq"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "1.23.1",
