@@ -8,6 +8,7 @@ import { notifyGuardianTaken, sweepMissedDoses } from '../utils/guardian';
 import MedThumb from '../components/MedThumb';
 import { Button } from '../components/ui';
 import { holdUpdates } from '../utils/updates';
+import { resolveSound } from '../utils/sounds';
 import { colors, radius, formFor } from '../theme';
 
 const TONE_SOURCES = {
@@ -54,8 +55,14 @@ export default function AlarmScreen({ route, navigation }) {
             const user = await getSession();
             if (user) {
               const med = await getMedicine(user, medicineId);
-              const tone = toneById(med?.toneId);
-              source = TONE_SOURCES[tone.sound] || TONE_SOURCES.alarm;
+              // A device ringtone resolves to a content:// URI, which expo-av
+              // plays directly; a bundled tone resolves to a required asset.
+              // resolveSound falls back to a bundled tone if the chosen sound
+              // has gone — silence is the one outcome an alarm cannot have.
+              const chosen = await resolveSound(med?.toneId);
+              source = chosen.uri
+                ? { uri: chosen.uri }
+                : TONE_SOURCES[chosen.sound] || TONE_SOURCES.alarm;
               // The photo rides along in the offline medicines cache, so it
               // still shows when the alarm fires with no network.
               if (med?.photo && !cancelled) setPhoto(med.photo);

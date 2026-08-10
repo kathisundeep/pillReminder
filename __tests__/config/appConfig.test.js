@@ -137,7 +137,9 @@ describe('over-the-air updates', () => {
     // Change this ONLY alongside a new native build. Every phone carrying the
     // app asks for this exact string; changing it here without shipping a
     // binary that reports the same value cuts them off from updates silently.
-    expect(expo.runtimeVersion).toBe('1.1.0');
+    // Bumped to 1.2.0 when the ringtones native module was added: a binary
+    // without it cannot run this JS, so the two must not share updates.
+    expect(expo.runtimeVersion).toBe('1.2.0');
   });
 
   it('lets the app version move independently of the runtime version', () => {

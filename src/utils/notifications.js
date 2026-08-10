@@ -1,6 +1,8 @@
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
+import { TONES, toneById } from './tones';
+import { ensureChannelForSound, isDeviceSound } from './sounds';
 
 const CHANNEL_ID = 'pill-alarm-v2';
 export const SNOOZE_TITLE = 'Snoozed reminder';
@@ -8,17 +10,7 @@ const ALARM_SOUND = 'alarm';
 
 // Selectable, bundled alarm tones. `sound` is the res/raw file name (no ext);
 // each tone gets its own Android channel because a channel's sound is fixed.
-export const TONES = [
-  { id: 'classic', label: 'Classic', sound: 'alarm', channelId: 'pill-alarm-classic' },
-  { id: 'chime', label: 'Chime', sound: 'chime', channelId: 'pill-alarm-chime' },
-  { id: 'bell', label: 'Bell', sound: 'bell', channelId: 'pill-alarm-bell' },
-  { id: 'siren', label: 'Siren', sound: 'siren', channelId: 'pill-alarm-siren' },
-  { id: 'gentle', label: 'Gentle', sound: 'gentle', channelId: 'pill-alarm-gentle' },
-];
-
-export function toneById(id) {
-  return TONES.find((t) => t.id === id) || TONES[0];
-}
+export { TONES, toneById } from './tones';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -129,14 +121,19 @@ function alarmContent(
 
 export async function scheduleDailyAlarm({ medicineId, medicineName, hour, minute, toneId }) {
   const tone = toneById(toneId);
+  // A device sound lives on its own channel, created on demand. The channel
+  // carries the sound on Android O+, so the content sound is left off for one
+  // — setting both makes the two disagree, and the channel wins silently.
+  const channelId = (await ensureChannelForSound(toneId)) || tone.channelId;
+  const contentSound = isDeviceSound(toneId) ? undefined : tone.sound;
   const slot = `${pad2(hour)}:${pad2(minute)}`;
   const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName, undefined, tone.sound, slot),
+    content: alarmContent(medicineId, medicineName, undefined, contentSound, slot),
     trigger: {
       hour,
       minute,
       repeats: true,
-      channelId: tone.channelId,
+      channelId,
     },
   });
   return id;
@@ -144,15 +141,17 @@ export async function scheduleDailyAlarm({ medicineId, medicineName, hour, minut
 
 export async function scheduleWeeklyAlarm({ medicineId, medicineName, weekday, hour, minute, toneId }) {
   const tone = toneById(toneId);
+  const channelId = (await ensureChannelForSound(toneId)) || tone.channelId;
+  const contentSound = isDeviceSound(toneId) ? undefined : tone.sound;
   const slot = `${pad2(hour)}:${pad2(minute)}`;
   const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName, undefined, tone.sound, slot),
+    content: alarmContent(medicineId, medicineName, undefined, contentSound, slot),
     trigger: {
       weekday,
       hour,
       minute,
       repeats: true,
-      channelId: tone.channelId,
+      channelId,
     },
   });
   return id;
@@ -160,6 +159,8 @@ export async function scheduleWeeklyAlarm({ medicineId, medicineName, weekday, h
 
 export async function scheduleSnooze({ medicineId, medicineName, minutes, toneId, slot }) {
   const tone = toneById(toneId);
+  const channelId = (await ensureChannelForSound(toneId)) || tone.channelId;
+  const contentSound = isDeviceSound(toneId) ? undefined : tone.sound;
   // Guard the arithmetic: an absent or non-numeric `minutes` used to produce a
   // NaN delay, i.e. an alarm that never fires. "Not specified" falls back to the
   // 10-minute default; "specified but too small" is floored at 60 seconds.
@@ -167,12 +168,12 @@ export async function scheduleSnooze({ medicineId, medicineName, minutes, toneId
   const seconds = Number.isFinite(mins) ? Math.max(60, mins * 60) : 600;
   const id = await Notifications.scheduleNotificationAsync({
     content: alarmContent(
-      medicineId, medicineName, SNOOZE_TITLE, tone.sound, slot ?? null
+      medicineId, medicineName, SNOOZE_TITLE, contentSound, slot ?? null
     ),
     trigger: {
       seconds,
       repeats: false,
-      channelId: tone.channelId,
+      channelId,
     },
   });
   return id;

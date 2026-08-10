@@ -364,3 +364,41 @@ jest.mock('expo-updates', () => {
   };
   return mock;
 });
+
+// The ringtones native module. Stateful so tests can present a phone with or
+// without device sounds, and assert which channels got created.
+jest.mock('./modules/ringtones', () => {
+  const state = {
+    available: true,
+    ringtones: [
+      { uri: 'content://media/internal/audio/media/10', title: 'Argon', type: 'alarm' },
+      { uri: 'content://media/internal/audio/media/11', title: 'Barium', type: 'alarm' },
+      { uri: 'content://media/internal/audio/media/20', title: 'Zen', type: 'ringtone' },
+      { uri: 'content://media/internal/audio/media/30', title: 'Blip', type: 'notification' },
+    ],
+    channels: {},
+    throwOnList: false,
+  };
+  return {
+    __state: state,
+    get hasNativeSounds() { return state.available; },
+    getRingtones: jest.fn(() => {
+      if (state.throwOnList) return [];
+      return state.available ? state.ringtones : [];
+    }),
+    ensureAlarmChannel: jest.fn((id, name, uri) => {
+      if (!state.available) return false;
+      state.channels[id] = { id, name, sound: uri };
+      return true;
+    }),
+    deleteChannel: jest.fn((id) => {
+      delete state.channels[id];
+      return true;
+    }),
+    listChannelIds: jest.fn(() => Object.keys(state.channels)),
+    channelSound: jest.fn((id) => state.channels[id]?.sound ?? null),
+    importSound: jest.fn(async (uri, name) => `${name}.caf`),
+    listImportedSounds: jest.fn(() => []),
+    deleteImportedSound: jest.fn(() => true),
+  };
+});

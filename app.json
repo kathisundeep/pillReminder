@@ -2,7 +2,7 @@
   "expo": {
     "name": "PillReminder",
     "slug": "pillreminder",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -28,7 +28,7 @@
     },
     "android": {
       "package": "com.pillreminder.app",
-      "versionCode": 4,
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#4CAF50"
@@ -41,7 +41,8 @@
         "android.permission.VIBRATE",
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_AUDIO"
       ]
     },
     "plugins": [
@@ -75,7 +76,7 @@
       "supabaseAnonKey": "sb_publishable_RPyqdASQP1dbyc_8OF6oYA_lSEMhOIO"
     },
     "owner": "sandy419",
-    "runtimeVersion": "1.1.0",
+    "runtimeVersion": "1.2.0",
     "updates": {
       "url": "https://u.expo.dev/a1f2f3fa-012b-43f4-bfa9-775ec35cfed6"
     }

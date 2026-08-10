@@ -62,9 +62,8 @@ describe('app.json', () => {
     expect(expo.runtimeVersion).not.toBe(expo.version);
   });
 
-  it('keeps runtimeVersion matching the APK already in the field', () => {
-    expect(expo.runtimeVersion).toBe('1.1.0');
-  });
+  // The exact value is asserted once, in __tests__/config/appConfig.test.js.
+  // Repeating it here meant a runtime bump failed in two places for one reason.
 
   it('has a versionCode for the Play Store', () => {
     expect(Number.isInteger(expo.android.versionCode)).toBe(true);
