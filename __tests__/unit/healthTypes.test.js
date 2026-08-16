@@ -1,13 +1,21 @@
-import { READING_TYPES, typeById } from '../../src/utils/health';
+import { READING_TYPES, ADDABLE_TYPES, typeById } from '../../src/utils/health';
 
 describe('READING_TYPES', () => {
-  it('offers the four tracked measurements', () => {
+  it('knows every measurement it can render', () => {
     expect(READING_TYPES.map((t) => t.id)).toEqual([
       'bp',
       'sugar',
       'cholesterol',
+      'hemoglobin',
       'weight',
     ]);
+  });
+
+  // Weight is entered on the profile so there is one figure to trust. The type
+  // survives so existing history still lists and charts.
+  it('does not offer weight as something to add from Trackers', () => {
+    expect(ADDABLE_TYPES.map((t) => t.id)).not.toContain('weight');
+    expect(ADDABLE_TYPES.map((t) => t.id)).toContain('hemoglobin');
   });
 
   it('gives every type a label, unit, fields and a formatter', () => {
@@ -81,5 +89,36 @@ describe('format()', () => {
 
   it('does not throw on missing values, it renders undefined', () => {
     expect(typeById('bp').format({})).toBe('undefined/undefined');
+  });
+});
+
+describe('reference bands', () => {
+  const { bandOf, chartValue, BANDS } = require('../../src/utils/health');
+
+  it('bands a hemoglobin reading', () => {
+    expect(bandOf('hemoglobin', { value: 9 })).toBe(BANDS.LOW);
+    expect(bandOf('hemoglobin', { value: 14 })).toBe(BANDS.NORMAL);
+    expect(bandOf('hemoglobin', { value: 19 })).toBe(BANDS.HIGH);
+  });
+
+  // 120/95 is not a normal reading just because the systolic looks fine.
+  it('lets the worse half of a blood pressure decide the band', () => {
+    expect(bandOf('bp', { systolic: 120, diastolic: 95 })).toBe(BANDS.HIGH);
+    expect(bandOf('bp', { systolic: 145, diastolic: 80 })).toBe(BANDS.HIGH);
+    expect(bandOf('bp', { systolic: 118, diastolic: 76 })).toBe(BANDS.NORMAL);
+  });
+
+  it('returns unknown rather than guessing', () => {
+    expect(bandOf('hemoglobin', { value: 'abc' })).toBe(BANDS.UNKNOWN);
+    expect(bandOf('hemoglobin', null)).toBe(BANDS.UNKNOWN);
+    expect(bandOf('weight', { value: 70 })).toBe(BANDS.UNKNOWN);
+  });
+
+  it('picks the number worth charting per type', () => {
+    expect(chartValue('bp', { systolic: 120, diastolic: 80 })).toBe(120);
+    expect(chartValue('cholesterol', { total: 190, hdl: 50 })).toBe(190);
+    expect(chartValue('hemoglobin', { value: 13.5 })).toBe(13.5);
+    expect(chartValue('hemoglobin', { value: 'x' })).toBeNull();
+    expect(chartValue('hemoglobin', null)).toBeNull();
   });
 });

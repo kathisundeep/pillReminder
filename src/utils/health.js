@@ -3,6 +3,16 @@ import { supabase } from './supabase';
 // Health trackers stored in public.health_readings (RLS: owner + linked guardian
 // read). `values` is a jsonb blob shaped per type.
 
+export const BANDS = { LOW: 'low', NORMAL: 'normal', HIGH: 'high', UNKNOWN: 'unknown' };
+
+// Below `low` is low, above `high` is high, anything between is normal.
+function bandFor(value, low, high) {
+  if (!Number.isFinite(value)) return BANDS.UNKNOWN;
+  if (value < low) return BANDS.LOW;
+  if (value > high) return BANDS.HIGH;
+  return BANDS.NORMAL;
+}
+
 export const READING_TYPES = [
   {
     id: 'bp',
@@ -13,6 +23,16 @@ export const READING_TYPES = [
       { key: 'diastolic', label: 'Diastolic' },
     ],
     format: (v) => `${v.systolic}/${v.diastolic}`,
+    // Whichever number is worse decides the band: 120/95 is not a normal
+    // reading just because the systolic looks fine.
+    band: (v) => {
+      const sys = bandFor(Number(v.systolic), 90, 130);
+      const dia = bandFor(Number(v.diastolic), 60, 85);
+      if (sys === BANDS.HIGH || dia === BANDS.HIGH) return BANDS.HIGH;
+      if (sys === BANDS.LOW || dia === BANDS.LOW) return BANDS.LOW;
+      if (sys === BANDS.UNKNOWN || dia === BANDS.UNKNOWN) return BANDS.UNKNOWN;
+      return BANDS.NORMAL;
+    },
   },
   {
     id: 'sugar',
@@ -20,6 +40,8 @@ export const READING_TYPES = [
     unit: 'mg/dL',
     fields: [{ key: 'value', label: 'Reading' }],
     format: (v) => `${v.value}`,
+    // Non-fasting range; the app does not ask which it was.
+    band: (v) => bandFor(Number(v.value), 70, 140),
   },
   {
     id: 'cholesterol',
@@ -35,6 +57,18 @@ export const READING_TYPES = [
       `Total ${v.total}` +
       (v.hdl != null ? ` · HDL ${v.hdl}` : '') +
       (v.ldl != null ? ` · LDL ${v.ldl}` : ''),
+    band: (v) => bandFor(Number(v.total), 0, 200),
+  },
+  {
+    id: 'hemoglobin',
+    label: 'Hemoglobin',
+    unit: 'g/dL',
+    fields: [{ key: 'value', label: 'Hemoglobin' }],
+    format: (v) => `${v.value}`,
+    // Adult reference range. Deliberately wide and sex-neutral: the app does
+    // not know enough to be precise, and a band that is too tight would flag
+    // healthy people. It is an observation aid, not a diagnosis.
+    band: (v) => bandFor(Number(v.value), 12, 17),
   },
   {
     id: 'weight',
@@ -42,8 +76,38 @@ export const READING_TYPES = [
     unit: 'kg',
     fields: [{ key: 'value', label: 'Weight' }],
     format: (v) => `${v.value}`,
+    // Recorded on the profile, not here: one figure, one place. Kept as a type
+    // so existing history still renders and charts.
+    enteredInProfile: true,
   },
 ];
+
+// The reading types a user can ADD from the trackers screen.
+export const ADDABLE_TYPES = READING_TYPES.filter((t) => !t.enteredInProfile);
+
+// The band for a reading, or 'unknown' when the type has no reference range
+// or the value cannot be read as a number.
+export function bandOf(type, values) {
+  const t = typeById(type);
+  if (typeof t.band !== 'function' || !values) return BANDS.UNKNOWN;
+  try {
+    return t.band(values) || BANDS.UNKNOWN;
+  } catch (e) {
+    return BANDS.UNKNOWN;
+  }
+}
+
+// A single number per reading, for charting. Multi-field types chart the one
+// that matters most.
+export function chartValue(type, values) {
+  if (!values) return null;
+  const pick =
+    type === 'bp' ? values.systolic
+    : type === 'cholesterol' ? values.total
+    : values.value;
+  const n = Number(pick);
+  return Number.isFinite(n) ? n : null;
+}
 
 export function typeById(id) {
   return READING_TYPES.find((t) => t.id === id) || READING_TYPES[0];

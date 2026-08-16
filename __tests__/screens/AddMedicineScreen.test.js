@@ -74,7 +74,7 @@ describe('AddMedicineScreen — create mode', () => {
 
   it('requires at least one name', async () => {
     await showScreen(AddMedicineScreen);
-    await press('Morning');
+    await press('Once');
     await press('Save');
     expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Add at least one medicine name.');
     expect(meds()).toHaveLength(0);
@@ -91,7 +91,7 @@ describe('AddMedicineScreen — create mode', () => {
   it('requires at least one day when set to specific days', async () => {
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('Specific days');
     await press('Save');
     expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Pick at least one day.');
@@ -101,7 +101,7 @@ describe('AddMedicineScreen — create mode', () => {
   it('saves a medicine still sitting in the text box, unadded', async () => {
     await showScreen(AddMedicineScreen);
     await typeInto('e.g. Paracetamol 500mg', 'Unadded');
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     expect(meds()).toHaveLength(1);
@@ -112,19 +112,18 @@ describe('AddMedicineScreen — create mode', () => {
     const { navigation } = await showScreen(AddMedicineScreen);
     await addName('Aspirin');
     await addName('Metformin');
-    await press('Morning');
-    await press('Night');
+    await press('Twice');
     await press('Save');
 
     expect(meds().map((m) => m.name).sort()).toEqual(['Aspirin', 'Metformin']);
-    for (const m of meds()) expect(m.times).toEqual(['08:00', '22:00']);
+    for (const m of meds()) expect(m.times).toEqual(['09:00', '21:00']);
     expect(navigation.goBack).toHaveBeenCalled();
   });
 
   it('applies the defaults a bare save should produce', async () => {
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     expect(meds()[0]).toMatchObject({
@@ -144,7 +143,7 @@ describe('AddMedicineScreen — create mode', () => {
     // The form is captured when the name is added, so it is chosen first.
     await press(/Syrup/);
     await addName('Cough syrup');
-    await press('Morning');
+    await press('Once');
     await press('Save');
     expect(meds()[0].form).toBe('Syrup');
   });
@@ -155,7 +154,7 @@ describe('AddMedicineScreen — create mode', () => {
     await showScreen(AddMedicineScreen);
     await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
     await press(/Capsule/);
-    await press('Morning');
+    await press('Once');
     await press('Save');
     expect(meds()[0]).toMatchObject({ name: 'Amoxil', form: 'Capsule' });
   });
@@ -172,7 +171,7 @@ describe('AddMedicineScreen — create mode', () => {
     await press(/Syrup/);
     await addName('Benadryl');
 
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     const saved = Object.fromEntries(meds().map((m) => [m.name, m.form]));
@@ -191,7 +190,7 @@ describe('AddMedicineScreen — create mode', () => {
     const later = screen.getAllByLabelText(/Tablet$/);
     await press(later[3]);
     await addName('Ibuprofen');
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     const [a, b] = ['Aspirin', 'Ibuprofen'].map(
@@ -220,7 +219,7 @@ describe('AddMedicineScreen — create mode', () => {
   it('records the chosen snooze duration', async () => {
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('30 min');
     await press('Save');
     expect(meds()[0].snooze_minutes).toBe(30);
@@ -229,7 +228,7 @@ describe('AddMedicineScreen — create mode', () => {
   it('records the chosen weekdays', async () => {
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('Specific days');
     await press('Mo');
     await press('We');
@@ -245,7 +244,7 @@ describe('AddMedicineScreen — create mode', () => {
     await addName('RedPill');
     await press('Blue');
     await addName('BluePill');
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     const byName = Object.fromEntries(meds().map((m) => [m.name, m.color]));
@@ -260,37 +259,39 @@ describe('AddMedicineScreen — times', () => {
     await showScreen(AddMedicineScreen);
   });
 
-  it('adds a quick time and shows it in 12-hour form', async () => {
-    await press('Morning');
-    expect(screen.getByText('8:00 AM  ×')).toBeTruthy();
+  // The quick-add chips (Morning, After lunch, Night…) were removed: they
+  // overlapped with "how many times a day", and two ways to set the same field
+  // meant the times shown could disagree with the count selected.
+  it('sets the times from the dose count, in 12-hour form', async () => {
+    await press('Once');
+    expect(screen.getByText('9:00 AM  ×')).toBeTruthy();
   });
 
-  it('toggles a quick time off when pressed again', async () => {
-    await press('Morning');
-    await press('Morning');
-    expect(screen.queryByText('8:00 AM  ×')).toBeNull();
+  it('replaces the whole set when the count changes', async () => {
+    await press('3 times');
+    expect(screen.getByText('8:00 AM  ×')).toBeTruthy();
+    await press('Twice');
+    expect(screen.getByText('9:00 AM  ×')).toBeTruthy();
+    expect(screen.queryByText('2:00 PM  ×')).toBeNull();
+  });
+
+  it('spaces the doses across the day rather than bunching them', async () => {
+    await press('3 times');
+    await addName('Aspirin');
+    await press('Save');
+    expect(meds()[0].times).toEqual(['08:00', '14:00', '20:00']);
   });
 
   it('removes a time by tapping its chip', async () => {
-    await press('Evening');
-    await press('5:00 PM  ×');
-    expect(screen.queryByText('5:00 PM  ×')).toBeNull();
+    await press('Twice');
+    await press('9:00 PM  ×');
+    expect(screen.queryByText('9:00 PM  ×')).toBeNull();
+    expect(screen.getByText('9:00 AM  ×')).toBeTruthy();
   });
 
-  it('keeps times sorted regardless of the order added', async () => {
-    await press('Night');
-    await press('Morning');
-    await addName('Aspirin');
-    await press('Save');
-    expect(meds()[0].times).toEqual(['08:00', '22:00']);
-  });
-
-  it('offers every documented quick time', async () => {
-    for (const label of [
-      'Morning', 'Before lunch', 'After lunch', 'Evening',
-      'Before dinner', 'After dinner', 'Night',
-    ]) {
-      expect(screen.getByText(label)).toBeTruthy();
+  it('no longer offers the quick-add chips', async () => {
+    for (const label of ['Before lunch', 'After lunch', 'Before dinner', 'Night']) {
+      expect(screen.queryByText(label)).toBeNull();
     }
   });
 
@@ -331,7 +332,7 @@ describe('AddMedicineScreen — alarm tone', () => {
   it('selecting a tone stores it on the medicine', async () => {
     await press('Bell');
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('Save');
     expect(meds()[0].tone_id).toBe('bell');
   });
@@ -358,7 +359,7 @@ describe('AddMedicineScreen — alarm tone', () => {
     Av.__state.failCreate = true;
     await press('Siren');
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('Save');
     expect(meds()[0].tone_id).toBe('siren');
   });
@@ -427,7 +428,7 @@ describe('AddMedicineScreen — photo', () => {
   it('saves the compressed photo onto the medicine row', async () => {
     await press('📷  Take a photo');
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     expect(meds()[0].photo).toBeTruthy();
@@ -438,7 +439,7 @@ describe('AddMedicineScreen — photo', () => {
     await press('📷  Take a photo');
     await addName('WithPhoto');
     await addName('NoPhoto'); // photo intentionally cleared after each add
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     const byName = Object.fromEntries(meds().map((m) => [m.name, m.photo]));
@@ -470,19 +471,18 @@ describe('AddMedicineScreen — alarms on save', () => {
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
     await addName('Metformin');
-    await press('Morning');
-    await press('Night');
+    await press('Twice');
     await press('Save');
 
     expect(scheduled()).toHaveLength(4);
-    expect(scheduled().map((n) => n.trigger.hour).sort((a, b) => a - b)).toEqual([8, 8, 22, 22]);
+    expect(scheduled().map((n) => n.trigger.hour).sort((a, b) => a - b)).toEqual([9, 9, 21, 21]);
   });
 
   it('re-arms ALL medicines, not just the new one', async () => {
     await addMedicine(null, { name: 'Existing', times: ['06:00'] });
     await showScreen(AddMedicineScreen);
     await addName('New');
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     expect(scheduled().map((n) => n.content.body).sort()).toEqual([
@@ -493,7 +493,7 @@ describe('AddMedicineScreen — alarms on save', () => {
   it('stores the device-local notification ids', async () => {
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     const [med] = await getMedicines();
@@ -504,7 +504,7 @@ describe('AddMedicineScreen — alarms on save', () => {
     Device.isDevice = false; // ensureNotificationSetup returns false
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     expect(Alert.alert).toHaveBeenCalledWith(
@@ -518,7 +518,7 @@ describe('AddMedicineScreen — alarms on save', () => {
     db().failOn('medicines', 'insert', { message: 'insert denied' });
     const { navigation } = await showScreen(AddMedicineScreen);
     await addName('Aspirin');
-    await press('Morning');
+    await press('Once');
     await press('Save');
 
     expect(Alert.alert).toHaveBeenCalledWith('Save failed', 'insert denied');
@@ -666,7 +666,7 @@ describe('AddMedicineScreen — guardian request mode', () => {
   it('files a request instead of writing a medicine', async () => {
     const { navigation } = await open();
     await addName('Vitamin D');
-    await press('Morning');
+    await press('Once');
     await press('Send request');
 
     expect(meds()).toHaveLength(0);
@@ -686,7 +686,7 @@ describe('AddMedicineScreen — guardian request mode', () => {
     await open();
     await addName('Vitamin D');
     await addName('Zinc');
-    await press('Morning');
+    await press('Once');
     await press('Send request');
     expect(db().rows('action_requests')).toHaveLength(2);
   });
@@ -695,7 +695,7 @@ describe('AddMedicineScreen — guardian request mode', () => {
     await open();
     await press('📷  Take a photo');
     await addName('Vitamin D');
-    await press('Morning');
+    await press('Once');
     await press('Send request');
     expect(db().rows('action_requests')[0].payload.photo).toBeTruthy();
   });
@@ -703,7 +703,7 @@ describe('AddMedicineScreen — guardian request mode', () => {
   it('does not arm the guardian`s own alarms', async () => {
     await open();
     await addName('Vitamin D');
-    await press('Morning');
+    await press('Once');
     await press('Send request');
     expect(scheduled()).toHaveLength(0);
   });
@@ -712,7 +712,7 @@ describe('AddMedicineScreen — guardian request mode', () => {
     db().failOn('action_requests', 'insert', { message: 'not permitted' });
     const { navigation } = await open();
     await addName('Vitamin D');
-    await press('Morning');
+    await press('Once');
     await press('Send request');
 
     expect(Alert.alert).toHaveBeenCalledWith('Failed', 'not permitted');
@@ -729,22 +729,22 @@ describe('AddMedicineScreen — course and dose count', () => {
     expect(meds()[0].times).toEqual(['09:00', '21:00']);
   });
 
-  it('lets the generated times still be changed', async () => {
+  it('lets the generated times be replaced by another count', async () => {
     await showScreen(AddMedicineScreen);
     await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
     await press('3 times');
     expect(meds()).toHaveLength(0);
-    // A quick-add chip toggles, and "3 times" already includes 08:00 — so add
-    // one that is NOT in the generated set.
-    await press('Before lunch');
+    // Switching the count replaces the set, which is the point: the chips are
+    // a starting point, and a custom time can still be added on top.
+    await press('Twice');
     await press('Save');
-    expect(meds()[0].times).toEqual(['08:00', '12:30', '14:00', '20:00']);
+    expect(meds()[0].times).toEqual(['09:00', '21:00']);
   });
 
   it('is ongoing by default, with no end date', async () => {
     await showScreen(AddMedicineScreen);
     await typeInto('e.g. Paracetamol 500mg', 'Vitamin D');
-    await press('Morning');
+    await press('Once');
     await press('Save');
     expect(meds()[0].end_date).toBeNull();
   });
@@ -753,7 +753,7 @@ describe('AddMedicineScreen — course and dose count', () => {
   it('stores a 15-day course as an inclusive date range', async () => {
     await showScreen(AddMedicineScreen);
     await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
-    await press('Morning');
+    await press('Once');
     await press('15 days');
     await press('Save');
 
@@ -767,7 +767,7 @@ describe('AddMedicineScreen — course and dose count', () => {
   it('treats one week as seven days, not eight', async () => {
     await showScreen(AddMedicineScreen);
     await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
-    await press('Morning');
+    await press('Once');
     await press('1 week');
     await press('Save');
 
@@ -780,7 +780,7 @@ describe('AddMedicineScreen — course and dose count', () => {
   it('can be switched back to ongoing, clearing the end date', async () => {
     await showScreen(AddMedicineScreen);
     await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
-    await press('Morning');
+    await press('Once');
     await press('10 days');
     await press('Ongoing');
     await press('Save');

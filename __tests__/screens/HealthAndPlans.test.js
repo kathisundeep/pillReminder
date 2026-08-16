@@ -26,7 +26,7 @@ describe('TrackersScreen', () => {
     await signedIn();
     await showScreen(TrackersScreen);
 
-    for (const label of ['Blood pressure', 'Blood sugar', 'Cholesterol', 'Weight']) {
+    for (const label of ['Blood pressure', 'Blood sugar', 'Cholesterol', 'Hemoglobin']) {
       expect(screen.getByText(label)).toBeTruthy();
     }
     expect(screen.getByText('Systolic')).toBeTruthy();
@@ -44,8 +44,8 @@ describe('TrackersScreen', () => {
     expect(screen.getByText('LDL')).toBeTruthy();
     expect(screen.getByText('Unit: mg/dL')).toBeTruthy();
 
-    await press('Weight');
-    expect(screen.getByText('Unit: kg')).toBeTruthy();
+    await press('Hemoglobin');
+    expect(screen.getByText('Unit: g/dL')).toBeTruthy();
     expect(screen.queryByText('HDL')).toBeNull();
   });
 
@@ -71,7 +71,7 @@ describe('TrackersScreen', () => {
   it('stores an optional note', async () => {
     await signedIn();
     await showScreen(TrackersScreen);
-    await press('Weight');
+    await press('Hemoglobin');
 
     const inputs = screen.UNSAFE_getAllByType(require('react-native').TextInput);
     await act(async () => {
@@ -104,7 +104,7 @@ describe('TrackersScreen', () => {
   it('clears the form after a successful save', async () => {
     await signedIn();
     await showScreen(TrackersScreen);
-    await press('Weight');
+    await press('Hemoglobin');
 
     let inputs = screen.UNSAFE_getAllByType(require('react-native').TextInput);
     await act(async () => {
@@ -248,6 +248,7 @@ describe('HealthReportScreen', () => {
     await addReading('weight', { value: 70 });
     await showScreen(HealthReportScreen);
 
+    // Weight is entered on the profile now, but its history still reports.
     expect(screen.getByText('Weight')).toBeTruthy();
     expect(screen.queryByText('Cholesterol')).toBeNull();
   });

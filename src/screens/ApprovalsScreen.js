@@ -38,7 +38,7 @@ export default function ApprovalsScreen({ navigation }) {
   const approve = async (req) => {
     setBusyId(req.id);
     try {
-      await addMedicine(null, req.payload); // insert as the patient (owner)
+      await addMedicine(null, req.payload); // insert as the user (owner)
       await setRequestStatus(req.id, 'approved');
       await resyncAlarmsFromCloud(); // schedule the new medicine's alarms
     } catch (e) {

@@ -97,16 +97,6 @@ function addDaysISO(iso, days) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-const QUICK_TIMES = [
-  { label: 'Morning', time: '08:00' },
-  { label: 'Before lunch', time: '12:30' },
-  { label: 'After lunch', time: '13:30' },
-  { label: 'Evening', time: '17:00' },
-  { label: 'Before dinner', time: '19:00' },
-  { label: 'After dinner', time: '21:00' },
-  { label: 'Night', time: '22:00' },
-];
-
 function pad(n) {
   return String(n).padStart(2, '0');
 }
@@ -649,32 +639,6 @@ export default function AddMedicineScreen({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.subLabel}>Quick add</Text>
-      <View style={styles.timesWrap}>
-        {QUICK_TIMES.map((q) => {
-          const already = times.includes(q.time);
-          return (
-            <TouchableOpacity
-              key={q.label}
-              style={[styles.quickChip, already && styles.quickChipOn]}
-              onPress={() =>
-                already
-                  ? setTimes(times.filter((t) => t !== q.time))
-                  : setTimes([...times, q.time].sort())
-              }
-            >
-              <Text
-                style={[
-                  styles.quickChipText,
-                  already && styles.quickChipTextOn,
-                ]}
-              >
-                {q.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
 
       <Text style={styles.label}>Frequency</Text>
       <View style={styles.segment}>

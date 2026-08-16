@@ -15,8 +15,8 @@ import {
 import MedThumb from '../components/MedThumb';
 import { colors, radius, shadow, formFor, periodFor } from '../theme';
 
-// A guardian sees the patient's regimen read-only. Every change has to go
-// through a request the patient approves, so nothing here is editable.
+// A guardian sees the user's regimen read-only. Every change has to go
+// through a request the user approves, so nothing here is editable.
 export default function GuardianUserScreen({ route, navigation }) {
   const { userId, username } = route.params || {};
   const [meds, setMeds] = useState([]);

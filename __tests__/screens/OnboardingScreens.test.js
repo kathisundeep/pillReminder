@@ -272,10 +272,27 @@ describe('ProfileDetailsScreen', () => {
     expect(screen.getByText(/stays right as years pass/)).toBeTruthy();
   });
 
-  it('explains that weight lives in Trackers', async () => {
+  it('records weight here rather than in Trackers', async () => {
     await signedIn();
     await showScreen(ProfileDetailsScreen);
-    expect(screen.getByText(/Weight lives in Trackers/)).toBeTruthy();
+    expect(screen.getByText(/Recorded here rather than in Trackers/)).toBeTruthy();
+  });
+
+  it('takes the date of birth day-first', async () => {
+    await signedIn();
+    await showScreen(ProfileDetailsScreen);
+    const field = screen.getByPlaceholderText('28/01/2000');
+    fireEvent.changeText(field, '28012000');
+    expect(field.props.value).toBe('28/01/2000');
+  });
+
+  it('offers both height and weight units', async () => {
+    await signedIn();
+    await showScreen(ProfileDetailsScreen);
+    expect(screen.getByText('cm')).toBeTruthy();
+    expect(screen.getByText('inches')).toBeTruthy();
+    expect(screen.getByText('kg')).toBeTruthy();
+    expect(screen.getByText('lbs')).toBeTruthy();
   });
 
   it('saves the details and stops asking', async () => {
@@ -284,7 +301,7 @@ describe('ProfileDetailsScreen', () => {
 
     await typeInto('e.g. Sundeep Kathi', 'Alice R');
     await press('Female');
-    await typeInto('YYYY-MM-DD', '1990-05-01');
+    await typeInto('28/01/2000', '01051990'); // 1 May 1990, day-first
     await typeInto('e.g. 172', '165');
     await typeInto('e.g. India', 'India');
     await press('Save and continue');

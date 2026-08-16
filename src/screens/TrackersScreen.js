@@ -2,17 +2,19 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, Alert, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
-  READING_TYPES,
+  ADDABLE_TYPES,
   typeById,
   addReading,
   getReadings,
   deleteReading,
 } from '../utils/health';
+import ReadingChart from '../components/ReadingChart';
 import {
   Screen,
   Content,
   TitleHeader,
   Card,
+  CardTitle,
   Button,
   Chip,
   ChipGroup,
@@ -93,7 +95,7 @@ export default function TrackersScreen({ navigation }) {
       <Content>
         <Field label="What are you recording?">
           <ChipGroup>
-            {READING_TYPES.map((t) => (
+            {ADDABLE_TYPES.map((t) => (
               <Chip
                 key={t.id}
                 label={t.label}
@@ -132,6 +134,11 @@ export default function TrackersScreen({ navigation }) {
             onPress={onSave}
             disabled={busy}
           />
+        </Card>
+
+        <Card>
+          <CardTitle>{def.label} over time</CardTitle>
+          <ReadingChart type={type} readings={readings} />
         </Card>
 
         <Text style={styles.listLabel}>Recent readings</Text>

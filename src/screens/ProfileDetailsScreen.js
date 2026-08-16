@@ -13,6 +13,7 @@ import {
   ChipGroup,
   Field,
   Input,
+  Segmented,
 } from '../components/ui';
 import {
   GENDERS,
@@ -20,6 +21,12 @@ import {
   completeOnboarding,
   skipOnboarding,
 } from '../utils/profile';
+import {
+  HEIGHT_UNITS, WEIGHT_UNITS,
+  heightToDisplay, heightToCm,
+  weightToDisplay, weightToKg,
+  isoToDisplay, displayToIso, formatDateInput, ageFromIso,
+} from '../utils/units';
 import { colors } from '../theme';
 
 // The details step, shown once after registration.
@@ -35,7 +42,11 @@ export default function ProfileDetailsScreen({ route, navigation }) {
 
   const [fullName, setFullName] = useState('');
   const [gender, setGender] = useState(null);
+  // Held in the DISPLAY form, DD/MM/YYYY, and converted on save. Keeping it as
+  // typed is what lets the slashes appear while typing.
   const [dob, setDob] = useState('');
+  const [heightUnit, setHeightUnit] = useState('cm');
+  const [weightUnit, setWeightUnit] = useState('kg');
   const [heightCm, setHeightCm] = useState('');
   const [country, setCountry] = useState('');
   const [weightKg, setWeightKg] = useState('');
@@ -45,8 +56,10 @@ export default function ProfileDetailsScreen({ route, navigation }) {
     if (details) {
       setFullName(details.full_name || '');
       setGender(details.gender || null);
-      setDob(details.date_of_birth || '');
-      setHeightCm(details.height_cm != null ? String(details.height_cm) : '');
+      setDob(isoToDisplay(details.date_of_birth) || '');
+      setHeightCm(
+        details.height_cm != null ? heightToDisplay(details.height_cm, 'cm') : ''
+      );
       setCountry(details.country || '');
     }
     setLoading(false);
@@ -70,10 +83,11 @@ export default function ProfileDetailsScreen({ route, navigation }) {
       const res = await completeOnboarding({
         full_name: fullName.trim() || null,
         gender,
-        date_of_birth: dob.trim() || null,
-        height_cm: heightCm.trim(),
+        date_of_birth: displayToIso(dob) || null,
+        // Always centimetres in storage, whatever unit was on screen.
+        height_cm: heightToCm(heightCm, heightUnit) ?? '',
         country: country.trim() || null,
-        weightKg: weightKg.trim(),
+        weightKg: weightToKg(weightKg, weightUnit) ?? '',
       });
       if (!res.ok) return setProblem(res.error);
       done();
@@ -143,24 +157,44 @@ export default function ProfileDetailsScreen({ route, navigation }) {
 
           <Field label="Date of birth">
             <Input
-              placeholder="YYYY-MM-DD"
-              autoCapitalize="none"
+              placeholder="28/01/2000"
+              keyboardType="number-pad"
               autoCorrect={false}
+              maxLength={10}
               value={dob}
-              onChangeText={setDob}
+              onChangeText={(text) => setDob(formatDateInput(text, dob))}
             />
           </Field>
           <Text style={styles.note}>
-            Your age is worked out from this, so it stays right as years pass.
+            Day first, as DD/MM/YYYY. Your age is worked out from this, so it
+            stays right as years pass.
+            {ageFromIso(displayToIso(dob)) != null
+              ? `  That makes you ${ageFromIso(displayToIso(dob))}.`
+              : ''}
           </Text>
 
-          <Field label="Height (cm)">
-            <Input
-              placeholder="e.g. 172"
-              keyboardType="numeric"
-              value={heightCm}
-              onChangeText={setHeightCm}
-            />
+          <Field label="Height">
+            <View style={styles.unitRow}>
+              <Input
+                style={{ flex: 1 }}
+                placeholder={heightUnit === 'cm' ? 'e.g. 172' : 'e.g. 68'}
+                keyboardType="numeric"
+                value={heightCm}
+                onChangeText={setHeightCm}
+              />
+              <Segmented
+                style={styles.unitToggle}
+                value={heightUnit}
+                onChange={(next) => {
+                  // Convert what is on screen so switching units does not
+                  // reinterpret 172 cm as 172 inches.
+                  const cm = heightToCm(heightCm, heightUnit);
+                  setHeightUnit(next);
+                  if (cm != null) setHeightCm(heightToDisplay(cm, next));
+                }}
+                options={HEIGHT_UNITS.map((u) => ({ value: u.id, label: u.label }))}
+              />
+            </View>
           </Field>
 
           <Field label="Country">
@@ -171,22 +205,31 @@ export default function ProfileDetailsScreen({ route, navigation }) {
             />
           </Field>
 
-          {!editing ? (
-            <>
-              <Field label="Current weight (kg)">
-                <Input
-                  placeholder="e.g. 71"
-                  keyboardType="numeric"
-                  value={weightKg}
-                  onChangeText={setWeightKg}
-                />
-              </Field>
-              <Text style={styles.note}>
-                Saved as your first weight reading. Weight lives in Trackers
-                from here on, so there is only ever one figure to trust.
-              </Text>
-            </>
-          ) : null}
+          <Field label="Weight">
+            <View style={styles.unitRow}>
+              <Input
+                style={{ flex: 1 }}
+                placeholder={weightUnit === 'kg' ? 'e.g. 71' : 'e.g. 156'}
+                keyboardType="numeric"
+                value={weightKg}
+                onChangeText={setWeightKg}
+              />
+              <Segmented
+                style={styles.unitToggle}
+                value={weightUnit}
+                onChange={(next) => {
+                  const kg = weightToKg(weightKg, weightUnit);
+                  setWeightUnit(next);
+                  if (kg != null) setWeightKg(weightToDisplay(kg, next));
+                }}
+                options={WEIGHT_UNITS.map((u) => ({ value: u.id, label: u.label }))}
+              />
+            </View>
+          </Field>
+          <Text style={styles.note}>
+            Recorded here rather than in Trackers, so there is one figure to
+            trust. Each save is kept, so the chart still shows how it changes.
+          </Text>
         </Card>
 
         {problem ? <Text style={styles.problem}>{problem}</Text> : null}
@@ -213,6 +256,8 @@ export default function ProfileDetailsScreen({ route, navigation }) {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  unitRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  unitToggle: { width: 132 },
   note: {
     fontSize: 12,
     color: colors.muted,
