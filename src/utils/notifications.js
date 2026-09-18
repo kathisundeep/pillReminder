@@ -97,19 +97,26 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
-function alarmContent(
-  medicineId,
-  medicineName,
-  titlePrefix = 'Time for your medicine',
-  sound = ALARM_SOUND,
-  slot = null
-) {
+// Everything an alarm needs to know about its medicines. One alarm can carry
+// several: medicines due at the same minute share a single notification, so
+// the phone rings once and the buttons act on all of them together.
+function alarmContent(meds, { title = 'Time for your medicine', sound = ALARM_SOUND, slot = null } = {}) {
+  const names = meds.map((m) => m.name || 'medicine');
+  const many = meds.length > 1;
   return {
-    title: titlePrefix,
-    body: `Take ${medicineName} now`,
+    title: many && title === 'Time for your medicine' ? `Time for ${meds.length} medicines` : title,
+    body: many ? `Take ${names.join(', ')}` : `Take ${names[0]} now`,
     // `slot` is the scheduled "HH:MM" this alarm belongs to. Doses are keyed by
     // it, so acting on the notification must know which dose it was.
-    data: { medicineId, medicineName, slot, type: 'pill-alarm' },
+    // medicineId/medicineName stay for single-medicine readers.
+    data: {
+      medicineIds: meds.map((m) => m.id),
+      medicineNames: names,
+      medicineId: meds[0]?.id ?? null,
+      medicineName: names.join(', '),
+      slot,
+      type: 'pill-alarm',
+    },
     sound,
     priority: Notifications.AndroidNotificationPriority.MAX,
     categoryIdentifier: 'pill-alarm-actions',
@@ -119,57 +126,58 @@ function alarmContent(
   };
 }
 
-export async function scheduleDailyAlarm({ medicineId, medicineName, hour, minute, toneId }) {
+// A shared alarm can only ring one tone; the first medicine's wins.
+async function toneFor(toneId) {
   const tone = toneById(toneId);
   // A device sound lives on its own channel, created on demand. The channel
   // carries the sound on Android O+, so the content sound is left off for one
   // — setting both makes the two disagree, and the channel wins silently.
   const channelId = (await ensureChannelForSound(toneId)) || tone.channelId;
-  const contentSound = isDeviceSound(toneId) ? undefined : tone.sound;
+  const sound = isDeviceSound(toneId) ? undefined : tone.sound;
+  return { channelId, sound };
+}
+
+function medsOf({ medicines, medicineId, medicineName, toneId }) {
+  if (medicines?.length) return medicines;
+  return [{ id: medicineId, name: medicineName, toneId }];
+}
+
+// weekday: 1-based (expo's convention), or null for every day.
+async function scheduleSlotAlarm({ meds, hour, minute, weekday = null }) {
+  const { channelId, sound } = await toneFor(meds[0]?.toneId);
   const slot = `${pad2(hour)}:${pad2(minute)}`;
-  const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName, undefined, contentSound, slot),
+  return Notifications.scheduleNotificationAsync({
+    content: alarmContent(meds, { sound, slot }),
     trigger: {
+      ...(weekday ? { weekday } : {}),
       hour,
       minute,
       repeats: true,
       channelId,
     },
   });
-  return id;
 }
 
-export async function scheduleWeeklyAlarm({ medicineId, medicineName, weekday, hour, minute, toneId }) {
-  const tone = toneById(toneId);
-  const channelId = (await ensureChannelForSound(toneId)) || tone.channelId;
-  const contentSound = isDeviceSound(toneId) ? undefined : tone.sound;
-  const slot = `${pad2(hour)}:${pad2(minute)}`;
-  const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(medicineId, medicineName, undefined, contentSound, slot),
-    trigger: {
-      weekday,
-      hour,
-      minute,
-      repeats: true,
-      channelId,
-    },
-  });
-  return id;
+export async function scheduleDailyAlarm({ hour, minute, ...who }) {
+  return scheduleSlotAlarm({ meds: medsOf(who), hour, minute });
 }
 
-export async function scheduleSnooze({ medicineId, medicineName, minutes, toneId, slot }) {
-  const tone = toneById(toneId);
-  const channelId = (await ensureChannelForSound(toneId)) || tone.channelId;
-  const contentSound = isDeviceSound(toneId) ? undefined : tone.sound;
+export async function scheduleWeeklyAlarm({ weekday, hour, minute, ...who }) {
+  return scheduleSlotAlarm({ meds: medsOf(who), hour, minute, weekday });
+}
+
+// `medicines` ([{ id, name }]) snoozes several doses as one alarm; the single
+// medicineId/medicineName form still works.
+export async function scheduleSnooze({ minutes, toneId, slot, ...who }) {
+  const meds = medsOf({ ...who, toneId });
+  const { channelId, sound } = await toneFor(toneId ?? meds[0]?.toneId);
   // Guard the arithmetic: an absent or non-numeric `minutes` used to produce a
   // NaN delay, i.e. an alarm that never fires. "Not specified" falls back to the
   // 10-minute default; "specified but too small" is floored at 60 seconds.
   const mins = minutes == null ? NaN : Number(minutes);
   const seconds = Number.isFinite(mins) ? Math.max(60, mins * 60) : 600;
   const id = await Notifications.scheduleNotificationAsync({
-    content: alarmContent(
-      medicineId, medicineName, SNOOZE_TITLE, contentSound, slot ?? null
-    ),
+    content: alarmContent(meds, { title: SNOOZE_TITLE, sound, slot: slot ?? null }),
     trigger: {
       seconds,
       repeats: false,
@@ -177,6 +185,52 @@ export async function scheduleSnooze({ medicineId, medicineName, minutes, toneId
     },
   });
   return id;
+}
+
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+function daysOf(med) {
+  return med.frequency === 'weekly' && med.daysOfWeek?.length ? med.daysOfWeek : ALL_DAYS;
+}
+
+// Which alarms to arm: one per time of day, carrying every medicine due then.
+// When all of them ring daily that is a single daily alarm; otherwise it is
+// split per weekday, so a Monday-only medicine joins the daily ones on Monday
+// instead of ringing on top of them.
+export function groupAlarms(medicines) {
+  const byTime = new Map();
+  for (const med of medicines || []) {
+    for (const t of med.times || []) {
+      if (!byTime.has(t)) byTime.set(t, []);
+      if (!byTime.get(t).includes(med)) byTime.get(t).push(med);
+    }
+  }
+  const groups = [];
+  for (const [time, meds] of byTime) {
+    const [hour, minute] = time.split(':').map(Number);
+    if (meds.every((m) => daysOf(m).length === 7)) {
+      groups.push({ hour, minute, weekday: null, meds });
+      continue;
+    }
+    for (const dow of ALL_DAYS) {
+      const due = meds.filter((m) => daysOf(m).includes(dow));
+      if (due.length) groups.push({ hour, minute, weekday: dow + 1, meds: due });
+    }
+  }
+  return groups;
+}
+
+// Arms the grouped alarms and returns medicine id -> ids of the alarms it rides
+// on. A shared alarm's id appears under each of its medicines.
+async function scheduleGroups(medicines) {
+  const idMap = {};
+  for (const med of medicines || []) idMap[med.id] = [];
+  for (const g of groupAlarms(medicines)) {
+    const meds = g.meds.map((m) => ({ id: m.id, name: m.name, toneId: m.toneId }));
+    const id = await scheduleSlotAlarm({ meds, hour: g.hour, minute: g.minute, weekday: g.weekday });
+    for (const m of g.meds) idMap[m.id].push(id);
+  }
+  return idMap;
 }
 
 export async function listScheduled() {
@@ -222,39 +276,9 @@ export async function resyncAlarms(medicines) {
     }
   }
 
-  const idMap = {};
-  for (const med of medicines || []) {
-    idMap[med.id] = await scheduleForMedicine(med);
-  }
-  return idMap;
+  return scheduleGroups(medicines);
 }
 
 export async function scheduleForMedicine(med) {
-  const ids = [];
-  for (const t of med.times) {
-    const [h, m] = t.split(':').map(Number);
-    if (med.frequency === 'weekly' && med.daysOfWeek?.length) {
-      for (const dow of med.daysOfWeek) {
-        const id = await scheduleWeeklyAlarm({
-          medicineId: med.id,
-          medicineName: med.name,
-          weekday: dow + 1,
-          hour: h,
-          minute: m,
-          toneId: med.toneId,
-        });
-        ids.push(id);
-      }
-    } else {
-      const id = await scheduleDailyAlarm({
-        medicineId: med.id,
-        medicineName: med.name,
-        hour: h,
-        minute: m,
-        toneId: med.toneId,
-      });
-      ids.push(id);
-    }
-  }
-  return ids;
+  return (await scheduleGroups([med]))[med.id] || [];
 }

@@ -209,6 +209,9 @@ export default function HomeScreen({ navigation }) {
         style: 'destructive',
         onPress: async () => {
           await deleteMedicine(user, med.id);
+          // Its alarm may be shared with other medicines at the same time, so
+          // re-arm them all rather than leaving it ringing until next launch.
+          await resyncAlarmsFromCloud();
           load();
         },
       },

@@ -10,6 +10,7 @@ import {
   scheduleSnooze,
   scheduleForMedicine,
   resyncAlarms,
+  groupAlarms,
   listScheduled,
   cancelNotification,
   cancelManyNotifications,
@@ -141,6 +142,8 @@ describe('scheduleDailyAlarm', () => {
       minute: 0,
     });
     expect(scheduled()[0].content.data).toEqual({
+      medicineIds: ['m1'],
+      medicineNames: ['Aspirin'],
       medicineId: 'm1',
       medicineName: 'Aspirin',
       slot: '08:00',
@@ -382,6 +385,68 @@ describe('resyncAlarms', () => {
 
     expect(scheduled().some((n) => n.content.data.medicineId === 'gone')).toBe(false);
     expect(scheduled().some((n) => n.content.title === 'Snoozed reminder')).toBe(true);
+  });
+});
+
+describe('medicines due at the same time', () => {
+  const daily = (id, name, times, extra = {}) => ({ id, name, times, frequency: 'daily', ...extra });
+
+  it('share one alarm that names them all', async () => {
+    await resyncAlarms([daily('m1', 'Aspirin', ['08:00']), daily('m2', 'Metformin', ['08:00'])]);
+
+    expect(scheduled()).toHaveLength(1);
+    const n = scheduled()[0];
+    expect(n.content.title).toBe('Time for 2 medicines');
+    expect(n.content.body).toBe('Take Aspirin, Metformin');
+    expect(n.content.data.medicineIds).toEqual(['m1', 'm2']);
+    expect(n.content.data.slot).toBe('08:00');
+  });
+
+  it('maps a shared alarm to each of its medicines', async () => {
+    const idMap = await resyncAlarms([
+      daily('m1', 'Aspirin', ['08:00', '20:00']),
+      daily('m2', 'Metformin', ['08:00']),
+    ]);
+    expect(scheduled()).toHaveLength(2);
+    expect(idMap.m1).toHaveLength(2);
+    expect(idMap.m2).toEqual([idMap.m1[0]]);
+  });
+
+  it('rings the first medicine`s tone for the whole group', async () => {
+    await resyncAlarms([
+      daily('m1', 'A', ['08:00'], { toneId: 'bell' }),
+      daily('m2', 'B', ['08:00'], { toneId: 'siren' }),
+    ]);
+    expect(scheduled()[0].trigger.channelId).toBe('pill-alarm-bell');
+  });
+
+  it('keeps medicines at different times apart', async () => {
+    await resyncAlarms([daily('m1', 'A', ['08:00']), daily('m2', 'B', ['08:30'])]);
+    expect(scheduled()).toHaveLength(2);
+    expect(scheduled().every((n) => n.content.data.medicineIds.length === 1)).toBe(true);
+  });
+
+  it('folds a weekly medicine into the daily ones on its own days only', () => {
+    const groups = groupAlarms([
+      daily('m1', 'Daily', ['08:00']),
+      { id: 'm2', name: 'Weekly', times: ['08:00'], frequency: 'weekly', daysOfWeek: [1] },
+    ]);
+    // Split per weekday: seven alarms, Monday's carrying both.
+    expect(groups).toHaveLength(7);
+    const monday = groups.find((g) => g.weekday === 2);
+    expect(monday.meds.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(groups.filter((g) => g.meds.length === 1)).toHaveLength(6);
+  });
+
+  it('snoozes several doses as one re-alarm', async () => {
+    await scheduleSnooze({
+      medicines: [{ id: 'm1', name: 'A' }, { id: 'm2', name: 'B' }],
+      minutes: 5,
+      slot: '08:00',
+    });
+    expect(scheduled()).toHaveLength(1);
+    expect(scheduled()[0].content.title).toBe('Snoozed reminder');
+    expect(scheduled()[0].content.data.medicineIds).toEqual(['m1', 'm2']);
   });
 });
 

@@ -467,15 +467,16 @@ describe('AddMedicineScreen — alarms on save', () => {
     await signIn();
   });
 
-  it('arms an alarm for every time of every medicine', async () => {
+  it('arms one alarm per time, shared by every medicine due then', async () => {
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
     await addName('Metformin');
     await press('Twice');
     await press('Save');
 
-    expect(scheduled()).toHaveLength(4);
-    expect(scheduled().map((n) => n.trigger.hour).sort((a, b) => a - b)).toEqual([9, 9, 21, 21]);
+    expect(scheduled()).toHaveLength(2);
+    expect(scheduled().map((n) => n.trigger.hour).sort((a, b) => a - b)).toEqual([9, 21]);
+    expect(scheduled().every((n) => n.content.data.medicineIds.length === 2)).toBe(true);
   });
 
   it('re-arms ALL medicines, not just the new one', async () => {

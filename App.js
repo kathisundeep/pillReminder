@@ -20,17 +20,14 @@ import TrackersScreen from './src/screens/TrackersScreen';
 import HealthReportScreen from './src/screens/HealthReportScreen';
 import CalendarScreen from './src/screens/CalendarScreen';
 import PlansScreen from './src/screens/PlansScreen';
-import { getSession, recordDose, getMedicines, pruneOldHistory } from './src/utils/storage';
-import {
-  ensureNotificationSetup,
-  scheduleSnooze,
-} from './src/utils/notifications';
+import { getSession, pruneOldHistory } from './src/utils/storage';
+import { ensureNotificationSetup } from './src/utils/notifications';
 import {
   registerForPushTokenAsync,
   registerBackgroundSweep,
   sweepMissedDoses,
-  notifyGuardianTaken,
 } from './src/utils/guardian';
+import { alarmMedicineIds, applyAlarmAction } from './src/utils/alarmActions';
 import { resyncAlarmsFromCloud } from './src/utils/sync';
 import { ROLES, RoleProvider, resolveRole } from './src/utils/role';
 import { applyUpdateIfAny } from './src/utils/updates';
@@ -92,9 +89,9 @@ export default function App() {
         const data = notification.request.content.data || {};
         if (data.type === 'pill-alarm') {
           go('Alarm', {
-            medicineId: data.medicineId,
-            medicineName: data.medicineName,
+            medicineIds: alarmMedicineIds(data),
             slot: data.slot ?? null,
+            notificationId: notification.request.identifier,
           });
         }
       }
@@ -113,40 +110,22 @@ export default function App() {
 
         if (data.type !== 'pill-alarm') return;
         const action = response.actionIdentifier;
-        const user = await getSession();
+        const notificationId = response.notification.request.identifier;
 
-        if (action === 'TAKEN') {
-          if (user) {
-            await recordDose(user, data.medicineId, 'taken', data.slot ?? null);
-            await notifyGuardianTaken(user, data.medicineName);
-          }
-          go('Home');
-        } else if (action === 'RESCHEDULE') {
-          if (user) {
-            await recordDose(user, data.medicineId, 'snoozed', data.slot ?? null);
-            const meds = await getMedicines(user);
-            const med = meds.find((m) => m.id === data.medicineId);
-            await scheduleSnooze({
-              medicineId: data.medicineId,
-              medicineName: data.medicineName,
-              minutes: med?.snoozeMinutes || 10,
-              toneId: med?.toneId,
-              slot: data.slot ?? null,
-            });
-          }
-          go('Home');
-        } else if (action === 'SKIP') {
-          // Explicit skip — guardian gets alerted by the missed-dose sweep.
-          if (user) {
-            await recordDose(user, data.medicineId, 'skipped', data.slot ?? null);
-            sweepMissedDoses();
-          }
+        // Taken / Reschedule / Skip act on every medicine the alarm carries.
+        // Anything else is a tap on the notification itself: open the alarm
+        // screen, where each medicine can be answered on its own.
+        if (['TAKEN', 'RESCHEDULE', 'SKIP'].includes(action)) {
+          await applyAlarmAction(await getSession(), action, data);
+          try {
+            await Notifications.dismissNotificationAsync(notificationId);
+          } catch (e) {}
           go('Home');
         } else {
           go('Alarm', {
-            medicineId: data.medicineId,
-            medicineName: data.medicineName,
+            medicineIds: alarmMedicineIds(data),
             slot: data.slot ?? null,
+            notificationId,
           });
         }
       }

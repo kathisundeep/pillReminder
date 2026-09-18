@@ -118,6 +118,7 @@ jest.mock('expo-notifications', () => {
     cancelAllScheduledNotificationsAsync: jest.fn(async () => {
       state.scheduled = [];
     }),
+    dismissNotificationAsync: jest.fn(async () => {}),
     getExpoPushTokenAsync: jest.fn(async () => {
       if (state.pushTokenError) throw state.pushTokenError;
       return { data: state.pushToken };

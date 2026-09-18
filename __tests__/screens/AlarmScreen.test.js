@@ -311,3 +311,57 @@ describe('AlarmScreen — teardown', () => {
     }
   });
 });
+
+describe('AlarmScreen — several medicines at once', () => {
+  async function twoDue() {
+    await signIn();
+    const a = await addMedicine(null, {
+      name: 'Aspirin', times: ['08:00'], photo: 'ASPIRIN',
+    });
+    const b = await addMedicine(null, { name: 'Metformin', times: ['08:00'], snoozeMinutes: 5 });
+    const shown = await showScreen(AlarmScreen, {
+      params: { medicineIds: [a, b], slot: '08:00', notificationId: 'notif-1' },
+    });
+    return { a, b, ...shown };
+  }
+
+  it('shows a card for each, with its photo and its own three choices', async () => {
+    await twoDue();
+
+    expect(screen.getByText('Aspirin')).toBeTruthy();
+    expect(screen.getByText('Metformin')).toBeTruthy();
+    expect(screen.getByText('2 of 2 medicines to take')).toBeTruthy();
+    expect(screen.getAllByText('✓  Mark taken')).toHaveLength(2);
+    expect(screen.getByText('Snooze 10 minutes')).toBeTruthy();
+    expect(screen.getByText('Snooze 5 minutes')).toBeTruthy();
+    expect(screen.getAllByText('Skip this dose')).toHaveLength(2);
+    const images = screen.UNSAFE_getAllByType(Image);
+    expect(images.some((i) => i.props.source?.uri === 'data:image/jpeg;base64,ASPIRIN')).toBe(true);
+  });
+
+  it('answers one at a time, and closes once every one is answered', async () => {
+    const { a, b, navigation } = await twoDue();
+
+    await press(screen.getAllByText('✓  Mark taken')[0]);
+    expect(navigation.replace).not.toHaveBeenCalled();
+    expect(screen.getByText('✓  Taken')).toBeTruthy();
+    expect(screen.getByText('1 of 2 medicines to take')).toBeTruthy();
+
+    await press('Skip this dose');
+
+    const rows = history();
+    expect(rows.find((r) => r.medicine_id === a).status).toBe('taken');
+    expect(rows.find((r) => r.medicine_id === b).status).toBe('skipped');
+    expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('notif-1');
+    expect(navigation.replace).toHaveBeenCalledWith('Home');
+  });
+
+  it('"Take all" records every open dose in one go', async () => {
+    const { navigation } = await twoDue();
+
+    await press('✓  Take all 2');
+
+    expect(history().filter((r) => r.status === 'taken')).toHaveLength(2);
+    expect(navigation.replace).toHaveBeenCalledWith('Home');
+  });
+});

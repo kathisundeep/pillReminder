@@ -10,6 +10,7 @@ import {
   registerUser,
   loginUser,
   addMedicine,
+  recordDose,
 } from '../../src/utils/storage';
 import { SWEEP_TASK, sweepMissedDoses } from '../../src/utils/guardian';
 
@@ -45,7 +46,7 @@ async function signIn(username = 'alice') {
 
 const alarmResponse = (actionIdentifier, data) => ({
   actionIdentifier,
-  notification: { request: { content: { data } } },
+  notification: { request: { identifier: 'notif-shown', content: { data } } },
 });
 
 beforeEach(() => {
@@ -169,6 +170,70 @@ describe('App — notification arrives', () => {
   });
 });
 
+describe('App — a shared alarm for several medicines', () => {
+  let ids;
+
+  beforeEach(async () => {
+    await signIn();
+    ids = [
+      await addMedicine(null, { name: 'Aspirin', times: ['08:00'], snoozeMinutes: 15 }),
+      await addMedicine(null, { name: 'Metformin', times: ['08:00'], snoozeMinutes: 5 }),
+    ];
+    await mountApp();
+    Notifications.__state.scheduled = [];
+  });
+
+  const shared = () => ({
+    type: 'pill-alarm', medicineIds: ids, medicineName: 'Aspirin, Metformin', slot: '08:00',
+  });
+
+  it('TAKEN records every medicine on the alarm and clears the notification', async () => {
+    await act(async () => {
+      await Notifications.__emitResponse(alarmResponse('TAKEN', shared()));
+    });
+    await flush();
+
+    const taken = history().filter((r) => r.status === 'taken');
+    expect(taken.map((r) => r.medicine_id).sort()).toEqual([...ids].sort());
+    expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('notif-shown');
+  });
+
+  it('TAKEN skips a dose already dealt with in the app', async () => {
+    await recordDose(null, ids[0], 'taken', '08:00');
+    await act(async () => {
+      await Notifications.__emitResponse(alarmResponse('TAKEN', shared()));
+    });
+    await flush();
+
+    const taken = history().filter((r) => r.status === 'taken');
+    expect(taken).toHaveLength(2);
+    expect(taken.filter((r) => r.medicine_id === ids[0])).toHaveLength(1);
+  });
+
+  it('RESCHEDULE re-alarms them together after the shortest snooze', async () => {
+    await act(async () => {
+      await Notifications.__emitResponse(alarmResponse('RESCHEDULE', shared()));
+    });
+    await flush();
+
+    expect(history().filter((r) => r.status === 'snoozed')).toHaveLength(2);
+    const snoozes = Notifications.__state.scheduled.filter(
+      (n) => n.content.title === 'Snoozed reminder'
+    );
+    expect(snoozes).toHaveLength(1);
+    expect(snoozes[0].content.data.medicineIds).toEqual(ids);
+    expect(snoozes[0].trigger.seconds).toBe(300);
+  });
+
+  it('SKIP skips every medicine on the alarm', async () => {
+    await act(async () => {
+      await Notifications.__emitResponse(alarmResponse('SKIP', shared()));
+    });
+    await flush();
+    expect(history().filter((r) => r.status === 'skipped')).toHaveLength(2);
+  });
+});
+
 describe('App — notification action buttons', () => {
   let medicineId;
 
@@ -264,7 +329,9 @@ describe('App — notification action buttons', () => {
     expect(snooze.trigger.channelId).toBe('pill-alarm-siren');
   });
 
-  it('RESCHEDULE falls back to 10 minutes for an unknown medicine', async () => {
+  // The alarm was armed before the medicine was deleted: nothing to act on,
+  // and certainly nothing to re-alarm.
+  it('RESCHEDULE does nothing for a medicine that no longer exists', async () => {
     await act(async () => {
       await Notifications.__emitResponse(
         alarmResponse('RESCHEDULE', {
@@ -274,10 +341,8 @@ describe('App — notification action buttons', () => {
     });
     await flush();
 
-    const snooze = Notifications.__state.scheduled.find(
-      (n) => n.content.title === 'Snoozed reminder'
-    );
-    expect(snooze.trigger.seconds).toBe(600);
+    expect(history()).toHaveLength(0);
+    expect(Notifications.__state.scheduled).toHaveLength(0);
   });
 
   it('SKIP records a skip against its own slot', async () => {
