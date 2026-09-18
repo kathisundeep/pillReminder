@@ -1,34 +1,20 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
 //
-// Generates apk-qr.png — a QR that installs the newest EAS build.
+// Generates apk-qr.png — a QR that installs the newest build.
 //
 //   npm run qr
 //
-// Run it after every `eas build`. It produces a NEW QR each time, pointing
-// straight at that build's artifact on expo.dev.
+// Points at the permanent GitHub URL (releases/latest/download/pillreminder.apk),
+// which `npm run release:apk` keeps current and verifies byte-for-byte against
+// the EAS build. So the QR only needs generating once; after a new build, run
+// release:apk and the same code installs it.
 //
-// WHY NOT ONE PERMANENT QR
-//
-// The previous design pointed at a fixed GitHub URL
-// (releases/latest/download/pillreminder.apk) so the printed code never had to
-// change. It was the better design on paper and it failed repeatedly in
-// practice, because keeping that URL current meant a chain of steps that could
-// each go wrong quietly: a personal access token that expired or lacked scope,
-// a release asset that would not overwrite on re-upload, a download cache keyed
-// on a constant filename that served a previous build's APK under the new
-// build's tag. That last one produced a release with the right tag, the right
-// asset name and the right size, containing the wrong app — indistinguishable
-// from success at every point except the phone.
-//
-// Pointing directly at the EAS artifact removes all of it. No token, no
-// release, no cache, no CDN pointer. The cost is a new QR per build, which is
-// a cost you can see, and that is the entire trade: an occasional visible cost
-// beats a rare invisible one.
+// It used to point straight at the EAS artifact instead. Those links EXPIRE:
+// a QR scanned weeks later returned S3's "NoSuchKey" XML instead of an APK.
 //
 // JS-only changes still need nothing here — `eas update --branch preview` and
-// installed apps pick them up on foreground. This is only for native changes
-// and fresh installs.
+// installed apps pick them up on foreground.
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -72,6 +58,15 @@ async function main() {
 
   let target = override;
   let build = null;
+
+  // --eas points at the newest EAS artifact instead (it expires; see above).
+  if (!target && !process.argv.includes('--eas')) {
+    const repo = run('git', ['remote', 'get-url', 'origin'])
+      .trim()
+      .replace(/^.*github\.com[:/]/, '')
+      .replace(/\.git$/, '');
+    target = `https://github.com/${repo}/releases/latest/download/pillreminder.apk`;
+  }
 
   if (!target) {
     console.log('Finding the newest finished Android build…');
@@ -142,8 +137,12 @@ async function main() {
   console.log(`Size    : ${(fs.statSync(outPath).size / 1024).toFixed(0)} KB`);
   console.log(
     `\nApp ${version} · ${owner}/${slug}\n\n` +
-      'This QR points at one specific build, so regenerate it after every\n' +
-      '`eas build`. JS-only changes need no new QR and no new build — run\n' +
+      (process.argv.includes('--eas') || override
+        ? 'This QR points at one specific build, so regenerate it after every\n' +
+          '`eas build`.'
+        : 'This QR is permanent: after a new `eas build`, run `npm run release:apk`\n' +
+          'and the same code installs it.') +
+      ' JS-only changes need neither — run\n' +
       '`eas update --branch preview` and installed apps pick them up.\n\n' +
       'Uninstall the old app before scanning: installing over the top can keep\n' +
       'a cached JS bundle and hide the change you are testing.'
