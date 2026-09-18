@@ -148,32 +148,37 @@ export function slotStatus(items) {
   return 'upcoming';
 }
 
-// A slot is settled once every dose in it has an answer — taken, skipped or
-// rescheduled. Home folds a settled slot down to one line, and this is what
-// that line says. `tone` picks the colour: taken (green), partial (orange),
-// skipped (red), snoozed (blue). Null while any dose still needs answering.
-const ANSWERED = ['taken', 'skipped', 'snoozed'];
+// A slot is settled once every dose in it is over: taken, skipped,
+// rescheduled, or missed (its time and grace ran out unanswered). Home folds a
+// settled slot to one line, and this is what that line says. `tone` picks the
+// colour: taken (green), partial (orange), skipped (red), snoozed (blue).
+// Null while any dose is still waiting.
+const SETTLED = ['taken', 'skipped', 'snoozed', 'missed'];
 
 export function slotSummary(items) {
-  if (!items.length || !items.every((i) => ANSWERED.includes(i.state))) return null;
+  if (!items.length || !items.every((i) => SETTLED.includes(i.state))) return null;
   const n = items.length;
   const count = (st) => items.filter((i) => i.state === st).length;
   const taken = count('taken');
   const skipped = count('skipped');
+  const missed = count('missed');
   const snoozed = count('snoozed');
+  const others = [
+    skipped && `${skipped} skipped`,
+    missed && `${missed} missed`,
+    snoozed && `${snoozed} rescheduled`,
+  ].filter(Boolean);
 
   if (taken === n) return { tone: 'taken', text: n === 1 ? '✓ Taken' : `✓ All ${n} taken` };
-  if (taken > 0) {
-    const rest = [skipped && `${skipped} skipped`, snoozed && `${snoozed} rescheduled`]
-      .filter(Boolean)
-      .join(', ');
-    return { tone: 'partial', text: `${taken} of ${n} taken`, detail: rest };
+  if (taken > 0) return { tone: 'partial', text: `${taken} of ${n} taken`, detail: others.join(', ') };
+  if (skipped + missed === n) {
+    const word = missed === 0 ? 'Skipped' : skipped === 0 ? 'Missed' : 'Not taken';
+    return { tone: 'skipped', text: n === 1 ? `✕ ${word}` : `✕ All ${n} ${word.toLowerCase()}` };
   }
-  if (skipped === n) return { tone: 'skipped', text: n === 1 ? '✕ Skipped' : `✕ All ${n} skipped` };
   return {
     tone: 'snoozed',
     text: '💤 Rescheduled',
-    detail: skipped ? `${skipped} skipped` : '',
+    detail: others.filter((o) => !o.endsWith('rescheduled')).join(', '),
   };
 }
 

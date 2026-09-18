@@ -30,6 +30,7 @@ import {
 import { resyncAlarmsFromCloud } from '../utils/sync';
 import { clearStoredRole, useRole } from '../utils/role';
 import { needsOnboarding } from '../utils/profile';
+import { doseOutcome, DOSE } from '../utils/adherence';
 import {
   formatTime,
   medState,
@@ -91,6 +92,12 @@ export default function HomeScreen({ navigation }) {
 
     // One query for the whole day rather than one per medicine.
     const entriesByMedicine = await getDoseEntriesForDay(u);
+    // How late a dose may run before it counts as missed — the guardian
+    // alert's allowance, so Home and the alert agree.
+    let grace = 30;
+    try {
+      grace = Number((await getMyProfile())?.settings?.graceMinutes) || 30;
+    } catch (e) {}
 
     const slotMap = {}; // time -> [{med, slot, state}]
     const off = [];
@@ -104,7 +111,12 @@ export default function HomeScreen({ navigation }) {
       // leaves the evening one still pending.
       for (const t of med.times || []) {
         if (!slotMap[t]) slotMap[t] = [];
-        slotMap[t].push({ med, slot: t, state: medState(med, entries, now, t) });
+        let state = medState(med, entries, now, t);
+        // A dose left unanswered past its time and grace is missed, not due.
+        if (state === 'pending' && doseOutcome(med, entries, t, now, now, grace) === DOSE.MISSED) {
+          state = 'missed';
+        }
+        slotMap[t].push({ med, slot: t, state });
       }
     }
     const sorted = Object.keys(slotMap)

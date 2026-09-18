@@ -82,7 +82,7 @@ async function press(target) {
 
 beforeEach(() => {
   jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
-  atLocal('12:00');
+  atLocal('08:10'); // inside the 8 AM dose's grace, so it reads as due
 });
 
 describe('HomeScreen — session', () => {
@@ -237,7 +237,7 @@ describe('HomeScreen — medicine list', () => {
     await signIn();
     const id = await addMedicine(null, { name: 'Aspirin', times: ['08:00', '20:00'] });
     await recordDose(null, id, 'taken', '08:00');
-    atLocal('20:30');
+    atLocal('20:15'); // inside the 8 PM dose's grace
     await show();
     await openSlot('8:00 AM');
 
@@ -253,8 +253,10 @@ describe('HomeScreen — medicine list', () => {
   it('marks only the chosen dose taken', async () => {
     await signIn();
     await addMedicine(null, { name: 'Aspirin', times: ['08:00', '20:00'] });
-    atLocal('20:30');
+    atLocal('20:15');
     await show();
+    // The 8 AM dose is past its grace, so its slot is folded as missed.
+    await openSlot('8:00 AM');
 
     // Two rows on screen, one per slot; act on the first (08:00).
     await setStatus('Taken', 0);
@@ -725,6 +727,7 @@ describe('HomeScreen — settled slots fold away', () => {
     const a = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
     await addMedicine(null, { name: 'Metformin', times: ['08:00'] });
     await recordDose(null, a, 'taken', '08:00');
+    atLocal('08:10'); // Metformin still inside its grace
     await show();
 
     expect(screen.getAllByLabelText(/^Dose status:/)).toHaveLength(2);
@@ -734,12 +737,56 @@ describe('HomeScreen — settled slots fold away', () => {
   it('folds a slot as soon as its last dose is answered', async () => {
     await signIn();
     await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    atLocal('08:10');
     await show();
 
     await setStatus('Taken');
 
     expect(screen.getByText('✓ Taken')).toBeTruthy();
     expect(screen.queryAllByLabelText(/^Dose status:/)).toHaveLength(0);
+  });
+
+  it('folds a taken + missed slot as partial', async () => {
+    await signIn();
+    const a = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await addMedicine(null, { name: 'Metformin', times: ['08:00'] });
+    await recordDose(null, a, 'taken', '08:00');
+    await show(); // 12:00 — Metformin's 8 AM dose is long past its grace
+
+    expect(screen.getByText('1 of 2 taken')).toBeTruthy();
+    expect(screen.getByText('1 missed')).toBeTruthy();
+    expect(screen.queryAllByLabelText(/^Dose status:/)).toHaveLength(0);
+  });
+
+  it('folds an unanswered slot as missed once its grace runs out', async () => {
+    await signIn();
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await addMedicine(null, { name: 'Metformin', times: ['08:00'] });
+    await show();
+
+    expect(screen.getByText('✕ All 2 missed')).toBeTruthy();
+  });
+
+  it('keeps an unanswered slot open inside its grace period', async () => {
+    await signIn();
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    atLocal('08:20');
+    await show();
+
+    expect(screen.getAllByLabelText(/^Dose status:/)).toHaveLength(1);
+  });
+
+  it('lets a missed dose be marked taken later today', async () => {
+    await signIn();
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await show();
+    await openSlot('8:00 AM');
+
+    await setStatus('Taken');
+
+    expect(db().rows('dose_history').filter((r) => r.status === 'taken')).toHaveLength(1);
+    // Opened by hand, so it stays open: the summary and the dose both say so.
+    expect(screen.getAllByText('✓ Taken')).toHaveLength(2);
   });
 
   // A Home left open overnight still shows yesterday; a change made on it
@@ -749,6 +796,7 @@ describe('HomeScreen — settled slots fold away', () => {
     await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
     atLocal('23:50');
     await show();
+    await openSlot('8:00 AM'); // folded as missed by now
 
     jest.setSystemTime(new Date(2025, 5, 11, 0, 10, 0, 0));
     await setStatus('Taken');
