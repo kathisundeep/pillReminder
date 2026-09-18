@@ -312,7 +312,12 @@ async function main() {
   // correct from every angle — right tag, right size, right asset name — while
   // serving the old app. Diagnosing that from the phone is near impossible,
   // because the only symptom is that a change you know you shipped is absent.
-  const tmp = path.join(os.tmpdir(), `pillreminder-${build.id}.apk`);
+  // The file itself must be called ASSET: gh names the upload after the file,
+  // and the `#ASSET` suffix below only sets a display label. A file named after
+  // the build id published under that name, and the QR's fixed URL 404'd.
+  const dir = path.join(os.tmpdir(), `pillreminder-${build.id}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, ASSET);
 
   console.log(`Build   ${build.id}`);
   console.log(`Version ${version}`);
