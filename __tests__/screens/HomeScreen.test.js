@@ -301,21 +301,24 @@ describe('HomeScreen — marking doses', () => {
     await flush(3);
 
     expect(screen.getByText('Mark this dose as')).toBeTruthy();
-    for (const label of ['Due', 'Taken', 'Snoozed', 'Skipped']) {
+    for (const label of ['Taken', 'Snoozed', 'Skipped']) {
       expect(screen.getByText(label)).toBeTruthy();
     }
+    // Due is a state, not an answer, so it is not offered.
+    expect(screen.queryByText('Due')).toBeNull();
   });
 
-  it('moves a taken dose back to Due', async () => {
+  it('changes a taken dose to skipped', async () => {
     await signIn();
     const id = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
     await recordDose(null, id, 'taken', '08:00');
     await show();
     await openSlot('8:00 AM');
 
-    await setStatus('Due');
+    await setStatus('Skipped');
 
     expect(db().rows('dose_history').filter((r) => r.status === 'taken')).toHaveLength(0);
+    expect(screen.getAllByText('✕ Skipped').length).toBeGreaterThan(0);
   });
 
   it('records a snooze and arms a re-alarm from the dropdown', async () => {

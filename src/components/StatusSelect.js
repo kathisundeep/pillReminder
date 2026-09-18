@@ -16,8 +16,10 @@ import { colors, radius, shadow, statusStyle } from '../theme';
 // overshoot, and every overshoot writes a real entry to the dose ledger.
 // A list you choose from states the options up front and costs one decision.
 
+// "Due" is not a choice: it is what a dose is before it has an answer, not an
+// answer itself. Offered here it could not reliably undo a skip or snooze, so
+// picking it on a settled slot appeared to do nothing.
 export const DOSE_CHOICES = [
-  { value: 'pending', label: '⏳ Due' },
   { value: 'taken', label: '✓ Taken' },
   { value: 'snoozed', label: '💤 Snoozed' },
   { value: 'skipped', label: '✕ Skipped' },
