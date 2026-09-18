@@ -148,6 +148,35 @@ export function slotStatus(items) {
   return 'upcoming';
 }
 
+// A slot is settled once every dose in it has an answer — taken, skipped or
+// rescheduled. Home folds a settled slot down to one line, and this is what
+// that line says. `tone` picks the colour: taken (green), partial (orange),
+// skipped (red), snoozed (blue). Null while any dose still needs answering.
+const ANSWERED = ['taken', 'skipped', 'snoozed'];
+
+export function slotSummary(items) {
+  if (!items.length || !items.every((i) => ANSWERED.includes(i.state))) return null;
+  const n = items.length;
+  const count = (st) => items.filter((i) => i.state === st).length;
+  const taken = count('taken');
+  const skipped = count('skipped');
+  const snoozed = count('snoozed');
+
+  if (taken === n) return { tone: 'taken', text: n === 1 ? '✓ Taken' : `✓ All ${n} taken` };
+  if (taken > 0) {
+    const rest = [skipped && `${skipped} skipped`, snoozed && `${snoozed} rescheduled`]
+      .filter(Boolean)
+      .join(', ');
+    return { tone: 'partial', text: `${taken} of ${n} taken`, detail: rest };
+  }
+  if (skipped === n) return { tone: 'skipped', text: n === 1 ? '✕ Skipped' : `✕ All ${n} skipped` };
+  return {
+    tone: 'snoozed',
+    text: '💤 Rescheduled',
+    detail: skipped ? `${skipped} skipped` : '',
+  };
+}
+
 // When does a not-yet-taken dose become "missed" and worth alerting a guardian?
 //
 // Precedence: an explicit Skip wins, then the pending snooze re-alarm, then the

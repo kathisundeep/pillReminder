@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Alert,
   RefreshControl,
+  AppState,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -15,6 +16,7 @@ import {
   getSession,
   getDoseEntriesForDay,
   setTakenToday,
+  todayKey,
   recordDose,
   addMedicine,
 } from '../utils/storage';
@@ -33,6 +35,7 @@ import {
   medState,
   isDueToday,
   slotStatus,
+  slotSummary,
 } from '../utils/doseState';
 import {
   Screen,
@@ -65,6 +68,11 @@ export default function HomeScreen({ navigation }) {
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [showDetailsPrompt, setShowDetailsPrompt] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Settled slots start folded; these are the ones the user has opened.
+  const [opened, setOpened] = useState(() => new Set());
+  // The day on screen. Every write is stamped with the real date, so a Home
+  // left open past midnight would show yesterday and record into today.
+  const shownDay = useRef(todayKey());
 
   const load = useCallback(async () => {
     const u = await getSession();
@@ -76,6 +84,10 @@ export default function HomeScreen({ navigation }) {
     setUser(u);
     const list = await getMedicines(u);
     const now = new Date();
+    if (todayKey(now) !== shownDay.current) {
+      shownDay.current = todayKey(now);
+      setOpened(new Set());
+    }
 
     // One query for the whole day rather than one per medicine.
     const entriesByMedicine = await getDoseEntriesForDay(u);
@@ -148,6 +160,22 @@ export default function HomeScreen({ navigation }) {
     }, [load])
   );
 
+  // Coming back to the app on a new day swaps in the new day's doses.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active' && todayKey() !== shownDay.current) load();
+    });
+    return () => sub.remove();
+  }, [load]);
+
+  const toggleSlot = (time) =>
+    setOpened((prev) => {
+      const next = new Set(prev);
+      if (next.has(time)) next.delete(time);
+      else next.add(time);
+      return next;
+    });
+
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
@@ -157,6 +185,12 @@ export default function HomeScreen({ navigation }) {
   // One dose, one explicit new state. Every branch writes to the same
   // (day, medicine, slot) key.
   const setDoseState = async (med, slot, next) => {
+    // Only today's doses can be changed. If the day turned while this screen
+    // was open, show the new day instead of writing into it.
+    if (todayKey() !== shownDay.current) {
+      load();
+      return;
+    }
     if (next === 'taken') {
       await setTakenToday(user, med.id, true, slot);
       await notifyGuardianTaken(user, med.name);
@@ -292,40 +326,90 @@ export default function HomeScreen({ navigation }) {
         {slots.map((slot) => {
           const status = slotStatus(slot.items);
           const period = periodFor(slot.time);
+          const summary = slotSummary(slot.items);
+          const folded = summary && !opened.has(slot.time);
+          const tone = summary ? SUMMARY_TONE[summary.tone] : null;
+          const Header = summary ? TouchableOpacity : View;
           return (
-            <View key={slot.time} style={styles.slotCard}>
-              <View style={styles.slotHeader}>
-                <Text style={styles.slotTime}>{formatTime(slot.time)} Slot</Text>
-                <Pill bg={period.bg} color={period.text}>
-                  {period.label}
-                </Pill>
-              </View>
+            <View
+              key={slot.time}
+              style={[styles.slotCard, summary && { borderColor: tone.border }]}
+            >
+              <Header
+                style={[
+                  styles.slotHeader,
+                  summary && { backgroundColor: tone.bg, borderBottomColor: tone.border },
+                  folded && styles.slotHeaderFolded,
+                ]}
+                {...(summary
+                  ? {
+                      onPress: () => toggleSlot(slot.time),
+                      accessibilityRole: 'button',
+                      accessibilityState: { expanded: !folded },
+                      accessibilityLabel: `${formatTime(slot.time)} slot, ${summary.text}. ${
+                        folded ? 'Tap to show doses' : 'Tap to fold'
+                      }`,
+                    }
+                  : {})}
+              >
+                <View style={styles.slotHeaderText}>
+                  <Text style={styles.slotTime}>{formatTime(slot.time)} Slot</Text>
+                  {folded ? (
+                    <Text style={styles.slotNames} numberOfLines={1}>
+                      {slot.items.map((i) => i.med.name).join(', ')}
+                    </Text>
+                  ) : null}
+                </View>
+                {summary ? (
+                  <View style={styles.summaryRight}>
+                    <View style={styles.summaryText}>
+                      <Pill bg={tone.pill} color={tone.text}>
+                        {summary.text}
+                      </Pill>
+                      {summary.detail ? (
+                        <Text style={[styles.summaryDetail, { color: tone.text }]}>
+                          {summary.detail}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={[styles.chevron, { color: tone.text }]}>
+                      {folded ? '⌄' : '⌃'}
+                    </Text>
+                  </View>
+                ) : (
+                  <Pill bg={period.bg} color={period.text}>
+                    {period.label}
+                  </Pill>
+                )}
+              </Header>
 
               {/* Status is set through the dropdown; long-press still opens
                   the edit / delete menu, as it always has. */}
-              {slot.items.map(({ med, slot: at, state }) => (
-                <TouchableOpacity
-                  key={med.id}
-                  style={styles.doseRow}
-                  activeOpacity={0.7}
-                  onLongPress={() => onMedLongPress(med)}
-                >
-                  <MedThumb med={med} />
-                  <View style={styles.doseDetails}>
-                    <Text style={styles.doseName} numberOfLines={1}>
-                      {med.name}
-                    </Text>
-                    <Text style={styles.doseMeta}>
-                      {formFor(med.form).label}
-                      {med.frequency === 'weekly' ? ' • Weekly' : ' • Daily'}
-                    </Text>
-                  </View>
-                  <StatusSelect
-                    state={state}
-                    onSelect={(next) => setDoseState(med, at, next)}
-                  />
-                </TouchableOpacity>
-              ))}
+              {folded
+                ? null
+                : slot.items.map(({ med, slot: at, state }) => (
+                    <TouchableOpacity
+                      key={med.id}
+                      style={styles.doseRow}
+                      activeOpacity={0.7}
+                      onLongPress={() => onMedLongPress(med)}
+                    >
+                      <MedThumb med={med} />
+                      <View style={styles.doseDetails}>
+                        <Text style={styles.doseName} numberOfLines={1}>
+                          {med.name}
+                        </Text>
+                        <Text style={styles.doseMeta}>
+                          {formFor(med.form).label}
+                          {med.frequency === 'weekly' ? ' • Weekly' : ' • Daily'}
+                        </Text>
+                      </View>
+                      <StatusSelect
+                        state={state}
+                        onSelect={(next) => setDoseState(med, at, next)}
+                      />
+                    </TouchableOpacity>
+                  ))}
 
               {status === 'due' && (
                 <View style={styles.slotActions}>
@@ -387,6 +471,14 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
+// Colours of a settled slot, by how it went.
+const SUMMARY_TONE = {
+  taken: { bg: '#ecfdf5', pill: colors.takenBg, text: colors.takenText, border: '#a7f3d0' },
+  partial: { bg: '#fff7ed', pill: '#ffedd5', text: '#c2410c', border: '#fed7aa' },
+  skipped: { bg: '#fef2f2', pill: colors.skipBg, text: colors.skipText, border: '#fecaca' },
+  snoozed: { bg: '#f0f9ff', pill: colors.snoozeBg, text: colors.snoozeText, border: '#bae6fd' },
+};
+
 const styles = StyleSheet.create({
   headerActions: { flexDirection: 'row', gap: 8 },
   content: { padding: 16, gap: 14, paddingBottom: 28 },
@@ -417,6 +509,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   slotTime: { fontSize: 15, fontWeight: '800', color: colors.heading },
+  slotHeaderFolded: { borderBottomWidth: 0 },
+  slotHeaderText: { flex: 1, marginRight: 10 },
+  slotNames: { fontSize: 12.5, color: colors.muted, marginTop: 2 },
+  summaryRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  summaryText: { alignItems: 'flex-end', gap: 2 },
+  summaryDetail: { fontSize: 11, fontWeight: '700' },
+  chevron: { fontSize: 16, fontWeight: '800', marginTop: -4 },
 
   doseRow: {
     paddingVertical: 14,

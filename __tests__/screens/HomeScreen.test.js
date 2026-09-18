@@ -46,6 +46,14 @@ async function show({ params } = {}) {
   return utils;
 }
 
+// Unfold a settled slot, found by its time ("8:00 AM").
+async function openSlot(time) {
+  await act(async () => {
+    fireEvent.press(screen.getByLabelText(new RegExp(`^${time} slot`)));
+  });
+  await flush(3);
+}
+
 // Open a dose's status dropdown and choose a new state. `which` picks the row
 // when a medicine appears in more than one slot.
 async function setStatus(label, which = 0) {
@@ -217,6 +225,7 @@ describe('HomeScreen — medicine list', () => {
     await recordDose(null, snoozed, 'snoozed', '08:00');
     atLocal('12:00');
     await show();
+    await openSlot('8:00 AM');
 
     expect(screen.getByText('✕ Skipped')).toBeTruthy();
     expect(screen.getByText('💤 Snoozed')).toBeTruthy();
@@ -230,6 +239,7 @@ describe('HomeScreen — medicine list', () => {
     await recordDose(null, id, 'taken', '08:00');
     atLocal('20:30');
     await show();
+    await openSlot('8:00 AM');
 
     // Read the two status badges directly: the 8 PM slot also renders a
     // "✓ Taken" bulk-action button, which is a different control.
@@ -299,6 +309,7 @@ describe('HomeScreen — marking doses', () => {
     const id = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
     await recordDose(null, id, 'taken', '08:00');
     await show();
+    await openSlot('8:00 AM');
 
     await setStatus('Due');
 
@@ -655,5 +666,93 @@ describe('HomeScreen — resilience', () => {
     await flush();
 
     expect(screen.getByText(/Added later/)).toBeTruthy();
+  });
+});
+
+describe('HomeScreen — settled slots fold away', () => {
+  beforeEach(() => atLocal('12:00'));
+
+  it('folds a slot once every dose in it is taken, and says so in green', async () => {
+    await signIn();
+    const a = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    const b = await addMedicine(null, { name: 'Metformin', times: ['08:00'] });
+    await recordDose(null, a, 'taken', '08:00');
+    await recordDose(null, b, 'taken', '08:00');
+    await show();
+
+    expect(screen.getByText('✓ All 2 taken')).toBeTruthy();
+    expect(screen.getByText('Aspirin, Metformin')).toBeTruthy();
+    expect(screen.queryAllByLabelText(/^Dose status:/)).toHaveLength(0);
+  });
+
+  it('opens on tap to show every dose, and folds again on a second tap', async () => {
+    await signIn();
+    const a = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await recordDose(null, a, 'taken', '08:00');
+    await show();
+
+    await openSlot('8:00 AM');
+    expect(screen.getAllByLabelText(/^Dose status:/)).toHaveLength(1);
+
+    await openSlot('8:00 AM');
+    expect(screen.queryAllByLabelText(/^Dose status:/)).toHaveLength(0);
+  });
+
+  it('shows a partly taken slot as "1 of 2 taken"', async () => {
+    await signIn();
+    const a = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    const b = await addMedicine(null, { name: 'Metformin', times: ['08:00'] });
+    await recordDose(null, a, 'taken', '08:00');
+    await recordDose(null, b, 'skipped', '08:00');
+    await show();
+
+    expect(screen.getByText('1 of 2 taken')).toBeTruthy();
+    expect(screen.getByText('1 skipped')).toBeTruthy();
+  });
+
+  it('shows a fully skipped slot as skipped', async () => {
+    await signIn();
+    const a = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await recordDose(null, a, 'skipped', '08:00');
+    await show();
+
+    expect(screen.getByText('✕ Skipped')).toBeTruthy();
+    expect(screen.queryAllByLabelText(/^Dose status:/)).toHaveLength(0);
+  });
+
+  it('keeps a slot open while any dose still needs an answer', async () => {
+    await signIn();
+    const a = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await addMedicine(null, { name: 'Metformin', times: ['08:00'] });
+    await recordDose(null, a, 'taken', '08:00');
+    await show();
+
+    expect(screen.getAllByLabelText(/^Dose status:/)).toHaveLength(2);
+    expect(screen.queryByText('1 of 2 taken')).toBeNull();
+  });
+
+  it('folds a slot as soon as its last dose is answered', async () => {
+    await signIn();
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await show();
+
+    await setStatus('Taken');
+
+    expect(screen.getByText('✓ Taken')).toBeTruthy();
+    expect(screen.queryAllByLabelText(/^Dose status:/)).toHaveLength(0);
+  });
+
+  // A Home left open overnight still shows yesterday; a change made on it
+  // must not be written into today.
+  it('refuses a change made on yesterday`s screen after midnight', async () => {
+    await signIn();
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    atLocal('23:50');
+    await show();
+
+    jest.setSystemTime(new Date(2025, 5, 11, 0, 10, 0, 0));
+    await setStatus('Taken');
+
+    expect(db().rows('dose_history').filter((r) => r.status === 'taken')).toHaveLength(0);
   });
 });
