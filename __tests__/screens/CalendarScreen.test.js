@@ -112,6 +112,20 @@ describe('CalendarScreen', () => {
     expect(barColour('2026-08-05', 'night')).toBe('#ffffff');
   });
 
+  // Started on the 20th: the 1st–19th are not scored, so five taken doses
+  // out of five is 100%, not 5 of 25.
+  it('scores the month only from the day the medicine was added', async () => {
+    jest.setSystemTime(new Date(2026, 7, 25, 7, 0, 0, 0)); // before today's dose
+    const user = await signIn();
+    const id = await addMedicine(null, { name: 'A', times: ['08:00'], startDate: '2026-08-20' });
+    addedOn('2026-08-20');
+    for (const d of [20, 21, 22, 23, 24]) dose(user, id, `2026-08-${d}`, '08:00', 'taken');
+    await showScreen(CalendarScreen);
+
+    expect(screen.getByText('100% Monthly Score')).toBeTruthy();
+    expect(barColour('2026-08-19', 'morning')).toBe('#f1f5f9'); // nothing due
+  });
+
   it('spells out a tapped day dose by dose', async () => {
     const { user, id } = await setup();
     dose(user, id, '2026-08-03', '20:00', 'taken');
