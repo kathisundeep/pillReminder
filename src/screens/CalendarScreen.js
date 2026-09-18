@@ -35,17 +35,48 @@ import { colors, radius } from '../theme';
 // date sits on every cell and tapping one spells the day out dose by dose.
 
 // Segment colours for a bar, and badge colours + words for a dose.
-// Strong enough to read at a glance on a small cell; a time still to come is
-// left white ("not yet"), and a part of the day with nothing scheduled is a
-// faint grey so the three bars are always visible.
+// Soft fills in the prototype's palette. A band that needs attention —
+// missed, snoozed, due — also gets a thin edge in its own colour, so it
+// stands out from its neighbours without shouting. A time still to come is
+// left white; a part of the day with nothing scheduled is the faintest grey.
 const BAR = {
-  [DOSE.TAKEN]: '#4ade80',
-  [DOSE.MISSED]: '#f87171',
-  [DOSE.SNOOZED]: '#60a5fa',
-  [DOSE.DUE]: '#fbbf24',
+  [DOSE.TAKEN]: '#dcfce7',
+  [DOSE.MISSED]: '#fee2e2',
+  [DOSE.SNOOZED]: '#e0f2fe',
+  [DOSE.DUE]: '#fef3c7',
   [DOSE.FUTURE]: '#ffffff',
   none: '#f1f5f9',
 };
+const BAR_EDGE = {
+  [DOSE.MISSED]: '#fca5a5',
+  [DOSE.SNOOZED]: '#7dd3fc',
+  [DOSE.DUE]: '#fcd34d',
+};
+
+// One day as three stacked bands: morning, afternoon, night. Used full size
+// in the grid and small in the legend.
+function TriCell({ bands, dayKeyForTest }) {
+  return (
+    <View style={styles.tri}>
+      {BANDS.map((b, i) => {
+        const st = bands[b.id];
+        const edge = BAR_EDGE[st];
+        return (
+          <View
+            key={b.id}
+            testID={dayKeyForTest ? `bar-${dayKeyForTest}-${b.id}` : undefined}
+            style={[
+              styles.bar,
+              { backgroundColor: BAR[st] },
+              i < BANDS.length - 1 && styles.barDivider,
+              edge && { borderColor: edge, borderTopWidth: i ? 1 : 0, borderBottomWidth: 1 },
+            ]}
+          />
+        );
+      })}
+    </View>
+  );
+}
 
 const BADGE = {
   [DOSE.TAKEN]: { bg: '#d1fae5', fg: '#047857', word: '✓ Taken' },
@@ -59,9 +90,17 @@ const LEGEND = [
   [DOSE.TAKEN, 'Taken'],
   [DOSE.MISSED, 'Missed'],
   [DOSE.SNOOZED, 'Snoozed'],
-  [DOSE.DUE, 'Due'],
+  [DOSE.DUE, 'Due now'],
   [DOSE.FUTURE, 'Not yet'],
   ['none', 'Nothing due'],
+];
+
+// Worked examples, as the reference's "Tri-Segment Cell Guide" has them.
+const EXAMPLES = [
+  [{ morning: DOSE.MISSED, afternoon: DOSE.TAKEN, night: DOSE.TAKEN }, 'Top red — missed the morning dose'],
+  [{ morning: DOSE.TAKEN, afternoon: DOSE.MISSED, night: DOSE.TAKEN }, 'Middle red — missed the afternoon dose'],
+  [{ morning: DOSE.TAKEN, afternoon: DOSE.MISSED, night: DOSE.FUTURE }, 'White — that dose is still to come'],
+  [{ morning: DOSE.TAKEN, afternoon: DOSE.TAKEN, night: DOSE.TAKEN }, 'All green — every dose taken'],
 ];
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -78,8 +117,9 @@ function dayWords(day) {
   return 'all taken';
 }
 
-function DayCell({ day, onPress, selected }) {
+function DayCell({ day, onPress, selected, isToday }) {
   const date = new Date(day.date);
+  const ahead = day.state === DAY_STATE.FUTURE && !isToday;
   return (
     <View style={styles.cellWrap}>
       <Pressable
@@ -87,16 +127,17 @@ function DayCell({ day, onPress, selected }) {
         accessibilityRole="button"
         accessibilityLabel={`${date.getDate()} ${MONTH_NAMES[date.getMonth()]}, ${dayWords(day)}`}
         accessibilityState={{ selected }}
-        style={[styles.cell, selected && styles.cellSelected]}
+        style={({ pressed }) => [
+          styles.cell,
+          isToday && styles.cellToday,
+          selected && styles.cellSelected,
+          pressed && styles.cellPressed,
+        ]}
       >
-        {BANDS.map((b) => (
-          <View
-            key={b.id}
-            testID={`bar-${day.key}-${b.id}`}
-            style={[styles.bar, { backgroundColor: BAR[day.bands[b.id]] }]}
-          />
-        ))}
-        <Text style={styles.cellNum}>{date.getDate()}</Text>
+        <TriCell bands={day.bands} dayKeyForTest={day.key} />
+        <Text style={[styles.cellNum, ahead && styles.cellNumAhead, isToday && styles.cellNumToday]}>
+          {date.getDate()}
+        </Text>
       </Pressable>
     </View>
   );
@@ -315,19 +356,38 @@ export default function CalendarScreen({ navigation }) {
                     <DayCell
                       key={d.key}
                       day={d}
+                      isToday={d.key === dayKey(now)}
                       selected={selectedKey === d.key}
                       onPress={(day) => setSelectedKey(day.key)}
                     />
                   ))}
                 </View>
-                <Text style={styles.bandHint}>Each day: morning · afternoon · night, top to bottom</Text>
-                <View style={styles.legend}>
-                  {LEGEND.map(([st, word]) => (
-                    <View key={st} style={styles.legendItem}>
-                      <View style={[styles.legendDot, { backgroundColor: BAR[st] }]} />
-                      <Text style={styles.legendText}>{word}</Text>
+                <View style={styles.guide}>
+                  <Text style={styles.guideTitle}>Reading a day</Text>
+                  <Text style={styles.guideSub}>
+                    Top to bottom: morning (before 12), afternoon (12–5), night (after 5).
+                  </Text>
+                  {EXAMPLES.map(([bands, words]) => (
+                    <View key={words} style={styles.guideRow}>
+                      <View style={styles.guideCell}>
+                        <TriCell bands={bands} />
+                      </View>
+                      <Text style={styles.guideText}>{words}</Text>
                     </View>
                   ))}
+                  <View style={styles.legend}>
+                    {LEGEND.map(([st, word]) => (
+                      <View key={st} style={styles.legendItem}>
+                        <View
+                          style={[
+                            styles.legendDot,
+                            { backgroundColor: BAR[st], borderColor: BAR_EDGE[st] || colors.border },
+                          ]}
+                        />
+                        <Text style={styles.legendText}>{word}</Text>
+                      </View>
+                    ))}
+                  </View>
                 </View>
               </>
             )}
@@ -394,31 +454,52 @@ const styles = StyleSheet.create({
   },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   cellWrap: { width: `${100 / 7}%`, padding: 3 },
-  // The cell's own colour shows through the gaps, drawing the lines that
-  // split a day into morning / afternoon / night.
   cell: {
     aspectRatio: 1,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#cbd5e1',
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
     overflow: 'hidden',
-    gap: 2,
   },
-  cellSelected: { borderColor: colors.heading, borderWidth: 2, backgroundColor: colors.heading },
+  cellToday: { borderColor: '#059669', borderWidth: 2 },
+  cellSelected: { borderColor: colors.heading, borderWidth: 2 },
+  cellPressed: { transform: [{ scale: 0.95 }] },
+  tri: { flex: 1 },
   bar: { flex: 1 },
+  barDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(15,23,42,0.08)' },
   cellNum: {
     position: 'absolute',
     top: 2,
-    right: 5,
-    fontSize: 10.5,
+    right: 4,
+    fontSize: 10,
     fontWeight: '800',
-    color: colors.heading,
+    color: '#1e293b',
     textShadowColor: 'rgba(255,255,255,0.9)',
-    textShadowRadius: 3,
+    textShadowRadius: 2,
   },
-  bandHint: { fontSize: 11, color: colors.muted, marginTop: 10 },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 8 },
+  cellNumAhead: { color: '#94a3b8' },
+  cellNumToday: { color: '#047857' },
+  guide: {
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: 8,
+  },
+  guideTitle: { fontSize: 13.5, fontWeight: '800', color: colors.heading },
+  guideSub: { fontSize: 11.5, color: colors.muted, marginBottom: 2 },
+  guideRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  guideCell: {
+    width: 22,
+    height: 22,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
+  },
+  guideText: { flex: 1, fontSize: 12, fontWeight: '600', color: colors.muted },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 6 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot: {
     width: 12,

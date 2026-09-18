@@ -54,9 +54,9 @@ describe('CalendarScreen', () => {
     dose(user, id, '2026-08-03', '20:00', 'taken');
     await showScreen(CalendarScreen);
 
-    expect(barColour('2026-08-03', 'morning')).toBe('#f87171');
+    expect(barColour('2026-08-03', 'morning')).toBe('#fee2e2');
     expect(barColour('2026-08-03', 'afternoon')).toBe('#f1f5f9');
-    expect(barColour('2026-08-03', 'night')).toBe('#4ade80');
+    expect(barColour('2026-08-03', 'night')).toBe('#dcfce7');
   });
 
   it('does not show today`s evening dose as missed in the morning', async () => {
@@ -64,7 +64,7 @@ describe('CalendarScreen', () => {
     dose(user, id, '2026-08-05', '08:00', 'taken', '2026-08-05T08:02:00');
     await showScreen(CalendarScreen);
 
-    expect(barColour('2026-08-05', 'morning')).toBe('#4ade80');
+    expect(barColour('2026-08-05', 'morning')).toBe('#dcfce7');
     expect(barColour('2026-08-05', 'night')).toBe('#ffffff');
   });
 
@@ -79,7 +79,7 @@ describe('CalendarScreen', () => {
     addedOn('2026-08-03');
     await showScreen(CalendarScreen);
     expect(barColour('2026-08-02', 'morning')).toBe('#f1f5f9');
-    expect(barColour('2026-08-03', 'morning')).toBe('#f87171');
+    expect(barColour('2026-08-03', 'morning')).toBe('#fee2e2');
   });
 
   // The start_date migration stamped its own run day on existing medicines;
@@ -92,8 +92,8 @@ describe('CalendarScreen', () => {
     await showScreen(CalendarScreen);
 
     expect(barColour('2026-08-01', 'morning')).toBe('#f1f5f9');
-    expect(barColour('2026-08-02', 'morning')).toBe('#f87171');
-    expect(barColour('2026-08-03', 'morning')).toBe('#4ade80');
+    expect(barColour('2026-08-02', 'morning')).toBe('#fee2e2');
+    expect(barColour('2026-08-03', 'morning')).toBe('#dcfce7');
   });
 
   // The reported case: morning taken, afternoon missed, night still to come.
@@ -107,8 +107,8 @@ describe('CalendarScreen', () => {
     dose(user, id, '2026-08-05', '09:00', 'taken', '2026-08-05T09:05:00');
     await showScreen(CalendarScreen);
 
-    expect(barColour('2026-08-05', 'morning')).toBe('#4ade80');
-    expect(barColour('2026-08-05', 'afternoon')).toBe('#f87171');
+    expect(barColour('2026-08-05', 'morning')).toBe('#dcfce7');
+    expect(barColour('2026-08-05', 'afternoon')).toBe('#fee2e2');
     expect(barColour('2026-08-05', 'night')).toBe('#ffffff');
   });
 
