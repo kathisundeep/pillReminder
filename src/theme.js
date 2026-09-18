@@ -198,24 +198,27 @@ export function formFor(id) {
 }
 
 export const MED_COLORS = [
-  { name: 'Red', hex: '#f87171' },
+  { name: 'White', hex: '#FFFFFF' },
   { name: 'Yellow', hex: '#fbbf24' },
-  { name: 'Green', hex: '#34d399' },
+  { name: 'Red', hex: '#f87171' },
   { name: 'Blue', hex: '#60a5fa' },
-  { name: 'Purple', hex: '#c084fc' },
+  { name: 'Pink', hex: '#f472b6' },
 ];
 
 // A pale wash of the medicine's colour, for the icon tile behind it.
+// Green and purple are no longer offered, but medicines saved with them keep
+// their wash.
+const SOFT_TINTS = {
+  '#f87171': '#fef2f2',
+  '#fbbf24': '#fefce8',
+  '#60a5fa': '#eff6ff',
+  '#f472b6': '#fdf2f8',
+  '#34d399': '#ecfdf5',
+  '#c084fc': '#faf5ff',
+};
+
 export function tintFor(hex) {
-  const found = MED_COLORS.find((c) => c.hex === hex);
-  const soft = {
-    '#f87171': '#fef2f2',
-    '#fbbf24': '#fefce8',
-    '#34d399': '#ecfdf5',
-    '#60a5fa': '#eff6ff',
-    '#c084fc': '#faf5ff',
-  };
-  return (found && soft[found.hex]) || colors.cardSubtle;
+  return SOFT_TINTS[hex] || colors.cardSubtle;
 }
 
 // ---------------------------------------------------------------------------

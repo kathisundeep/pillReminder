@@ -79,8 +79,25 @@ export default function AddMedicineScreen({ route, navigation }) {
   const [deviceSoundsAvailable] = useState(() => canUseDeviceSounds());
   const previewRef = React.useRef(null);
   const [busy, setBusy] = useState(false);
+  // Opening a card (a new one, or a folded one tapped) scrolls it into view:
+  // the card above folds as this one opens, which otherwise leaves the screen
+  // parked below the form with only "+ Add another medicine" in sight.
+  const scrollRef = React.useRef(null);
+  const scrollToKey = React.useRef(null);
+  const [focusKey, setFocusKey] = useState(null);
 
   const activeKey = openKey || drafts[0]?.key;
+
+  const openCard = (key) => {
+    scrollToKey.current = key;
+    setOpenKey(key);
+  };
+
+  const onCardLayout = (key, y) => {
+    if (scrollToKey.current !== key) return;
+    scrollToKey.current = null;
+    scrollRef.current?.scrollTo?.({ y: Math.max(0, y - 12), animated: true });
+  };
 
   useEffect(() => {
     navigation.setOptions({
@@ -124,7 +141,8 @@ export default function AddMedicineScreen({ route, navigation }) {
     const last = drafts[drafts.length - 1];
     const next = newDraft(last);
     setDrafts([...drafts, next]);
-    setOpenKey(next.key);
+    setFocusKey(next.key);
+    openCard(next.key);
   };
 
   const removeDraft = (key) => {
@@ -316,6 +334,7 @@ export default function AddMedicineScreen({ route, navigation }) {
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={styles.container}
       contentContainerStyle={{ padding: 20, paddingBottom: 80 }}
       keyboardShouldPersistTaps="handled"
@@ -331,16 +350,18 @@ export default function AddMedicineScreen({ route, navigation }) {
       ) : null}
 
       {drafts.map((d, i) => (
-        <MedicineDraftCard
-          key={d.key}
-          draft={d}
-          index={i}
-          open={d.key === activeKey}
-          onOpen={() => setOpenKey(d.key)}
-          onChange={(patch) => updateDraft(d.key, patch)}
-          onRemove={batch && drafts.length > 1 ? () => removeDraft(d.key) : null}
-          showHeader={batch}
-        />
+        <View key={d.key} onLayout={(e) => onCardLayout(d.key, e.nativeEvent.layout.y)}>
+          <MedicineDraftCard
+            draft={d}
+            index={i}
+            open={d.key === activeKey}
+            onOpen={() => openCard(d.key)}
+            onChange={(patch) => updateDraft(d.key, patch)}
+            onRemove={batch && drafts.length > 1 ? () => removeDraft(d.key) : null}
+            showHeader={batch}
+            autoFocus={d.key === focusKey}
+          />
+        </View>
       ))}
 
       {batch ? (

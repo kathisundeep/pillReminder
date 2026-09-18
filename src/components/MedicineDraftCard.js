@@ -53,6 +53,7 @@ export default function MedicineDraftCard({
   onChange,
   onRemove,
   showHeader,
+  autoFocus,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerInitial, setPickerInitial] = useState({ hour: 8, minute: 0 });
@@ -146,22 +147,26 @@ export default function MedicineDraftCard({
         placeholder="e.g. Paracetamol 500mg"
         value={draft.name}
         onChangeText={(name) => set({ name })}
+        autoFocus={autoFocus}
       />
 
       <Text style={styles.label}>Type</Text>
-      <View style={styles.wrap}>
+      {/* All five on one row, icon over name, so the choice reads at a glance. */}
+      <View style={styles.row}>
         {MED_FORMS.map((f) => {
           const on = draft.form === f.id;
           return (
             <TouchableOpacity
               key={f.id}
-              style={[styles.chip, on && styles.chipOn]}
+              style={[styles.formItem, on && styles.formItemOn]}
               onPress={() => set({ form: f.id })}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
             >
-              <View style={styles.formChipInner}>
-                <MedIcon form={f.id} color={draft.color || '#FFFFFF'} size={18} />
-                <Text style={[styles.chipText, on && styles.chipTextOn]}>{f.label}</Text>
-              </View>
+              <MedIcon form={f.id} color={draft.color || '#FFFFFF'} size={22} />
+              <Text style={[styles.formText, on && styles.formTextOn]} numberOfLines={1}>
+                {f.label}
+              </Text>
             </TouchableOpacity>
           );
         })}
@@ -169,7 +174,7 @@ export default function MedicineDraftCard({
 
       <Text style={styles.label}>Colour</Text>
       <Text style={styles.hint}>How this medicine is shown in your list and on the alarm.</Text>
-      <View style={styles.colorRow}>
+      <View style={styles.row}>
         {MED_COLORS.map((c) => {
           const selected = draft.color === c.hex;
           return (
@@ -186,7 +191,8 @@ export default function MedicineDraftCard({
               <View
                 style={[
                   styles.colorSwatch,
-                  { backgroundColor: tintFor(c.hex), borderColor: c.hex },
+                  // White on white needs an edge to be seen at all.
+                  { backgroundColor: tintFor(c.hex), borderColor: c.hex === '#FFFFFF' ? '#cbd5e1' : c.hex },
                   selected && styles.colorSwatchSelected,
                 ]}
               >
@@ -298,7 +304,7 @@ export default function MedicineDraftCard({
       <Text style={styles.label}>How long?</Text>
       <Text style={styles.hint}>
         {draft.durationDays == null
-          ? 'Ongoing — no planned end date.'
+          ? 'Reminds you every day until you remove the medicine.'
           : `${draft.durationDays} days, ending ${new Date(
               addDaysISO(draft.startDate || todayISO(), draft.durationDays - 1) + 'T00:00:00'
             ).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}. Alarms stop by themselves.`}
@@ -394,13 +400,25 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: '#4CAF50', borderColor: '#4CAF50' },
   chipText: { color: '#555', fontWeight: '600', fontSize: 13 },
   chipTextOn: { color: '#fff' },
-  formChipInner: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 
-  colorRow: { flexDirection: 'row', flexWrap: 'wrap' },
-  colorItem: { alignItems: 'center', width: 62, marginBottom: 12 },
+  row: { flexDirection: 'row', gap: 6 },
+  formItem: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+  },
+  formItemOn: { borderColor: '#4CAF50', borderWidth: 2, backgroundColor: '#f1f8e9' },
+  formText: { fontSize: 11, fontWeight: '600', color: '#555' },
+  formTextOn: { color: '#2e7d32', fontWeight: '800' },
+
+  colorItem: { flex: 1, alignItems: 'center', marginBottom: 4 },
   colorSwatch: {
-    width: 46,
-    height: 46,
+    width: 42,
+    height: 42,
     borderRadius: 14,
     borderWidth: 2,
     alignItems: 'center',

@@ -17,7 +17,7 @@ export const DOSES_PER_DAY = [
 
 // A course length, as a doctor states it. `days` null means ongoing.
 export const DURATIONS = [
-  { days: null, label: 'Ongoing' },
+  { days: null, label: 'No end date' },
   { days: 3, label: '3 days' },
   { days: 5, label: '5 days' },
   { days: 7, label: '1 week' },
@@ -49,7 +49,7 @@ export function durationOf(startDate, endDate) {
 }
 
 export function durationLabel(days) {
-  if (days == null) return 'Ongoing';
+  if (days == null) return 'No end date';
   return DURATIONS.find((d) => d.days === days)?.label || `${days} days`;
 }
 

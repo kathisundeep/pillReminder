@@ -63,7 +63,7 @@ describe('AddMedicineScreen — create mode', () => {
     await addName('Metformin');
 
     expect(screen.getByLabelText('Edit Aspirin')).toBeTruthy();
-    expect(screen.getByText('Tablet · 9:00 AM, 9:00 PM · Daily · Ongoing')).toBeTruthy();
+    expect(screen.getByText('Tablet · 9:00 AM, 9:00 PM · Daily · No end date')).toBeTruthy();
     expect(screen.getByDisplayValue('Metformin')).toBeTruthy();
   });
 
@@ -245,16 +245,31 @@ describe('AddMedicineScreen — create mode', () => {
   it('previews the colour swatches using the selected form`s icon', async () => {
     await showScreen(AddMedicineScreen);
     // Default form is Tablet: five swatches, all showing the tablet glyph.
-    expect(screen.getAllByLabelText(/Tablet$/)).toHaveLength(5);
+    expect(screen.getAllByLabelText(/ Tablet$/)).toHaveLength(5);
 
     await press('Syrup');
     expect(screen.getAllByLabelText(/Syrup$/)).toHaveLength(5);
     expect(screen.queryAllByLabelText(/ Tablet$/)).toHaveLength(0);
   });
 
+  it('starts on White, selected', async () => {
+    await showScreen(AddMedicineScreen);
+    expect(screen.getByLabelText('White Tablet').props.accessibilityState).toEqual({ selected: true });
+  });
+
+  it('brings the new card into view and focuses its name', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('+ Add another medicine');
+
+    const input = screen.getByPlaceholderText('e.g. Paracetamol 500mg');
+    expect(input.props.autoFocus).toBe(true);
+    expect(input.props.value).toBe('');
+  });
+
   it('offers the five colours from the design system', async () => {
     await showScreen(AddMedicineScreen);
-    for (const name of ['Red', 'Yellow', 'Green', 'Blue', 'Purple']) {
+    for (const name of ['White', 'Yellow', 'Red', 'Blue', 'Pink']) {
       expect(screen.getByText(name)).toBeTruthy();
     }
   });
@@ -827,7 +842,7 @@ describe('AddMedicineScreen — course and dose count', () => {
     await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
     await press('Once');
     await press('10 days');
-    await press('Ongoing');
+    await press('No end date');
     await press('Save');
     expect(meds()[0].end_date).toBeNull();
   });
