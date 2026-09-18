@@ -114,9 +114,16 @@ export function doseOutcome(med, entries, slot, date, now = new Date(), grace = 
 // never hide behind a taken one at the same time of day.
 const BAR_RANK = [DOSE.MISSED, DOSE.DUE, DOSE.SNOOZED, DOSE.FUTURE, DOSE.TAKEN];
 
+// A bar state only — never a dose's. Some doses in that part of the day were
+// taken and some missed (8 AM missed, 9 AM taken): calling the whole morning
+// red would hide the dose that was taken.
+export const PARTIAL = 'partial';
+
 function barState(doses) {
   if (!doses.length) return 'none';
-  return BAR_RANK.find((st) => doses.some((d) => d.state === st));
+  const has = (st) => doses.some((d) => d.state === st);
+  if (has(DOSE.TAKEN) && has(DOSE.MISSED)) return PARTIAL;
+  return BAR_RANK.find(has);
 }
 
 // One day's verdict. `entriesByMed` is history[day] — { medicineId: [{status, slot, at}] }.

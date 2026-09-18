@@ -1,6 +1,7 @@
 import {
   DAY_STATE,
   DOSE,
+  PARTIAL,
   bandFor,
   dayKey,
   startOfWeek,
@@ -145,12 +146,34 @@ describe('dayAdherence', () => {
     expect(result.state).toBe(DAY_STATE.FULL);
   });
 
-  it('colours each bar by the worst dose in that part of the day', () => {
+  it('colours each bar by what happened in that part of the day', () => {
     const meds3 = [daily('a', ['08:00', '13:00']), daily('b', ['08:30', '21:00'])];
     const entries = { a: [took('08:00'), took('13:00')], b: [took('21:00')] };
+    // Morning: 8:00 taken, 8:30 missed — partly taken, not simply missed.
     expect(dayAdherence(meds3, entries, WED, AFTER).bands).toEqual({
-      morning: DOSE.MISSED, afternoon: DOSE.TAKEN, night: DOSE.TAKEN,
+      morning: PARTIAL, afternoon: DOSE.TAKEN, night: DOSE.TAKEN,
     });
+  });
+
+  // 8 AM missed + 9 AM taken: neither "missed" nor "taken" is true of the
+  // morning, and red would hide the dose that was taken.
+  it('marks a bar partial when some doses in it were taken and some missed', () => {
+    const med = daily('a', ['08:00', '09:00', '14:00', '20:00', '21:00']);
+    const entries = { a: [took('09:00'), took('21:00')] };
+    const result = dayAdherence([med], entries, WED, AFTER);
+    expect(result.bands).toEqual({ morning: PARTIAL, afternoon: DOSE.MISSED, night: PARTIAL });
+    expect(result).toMatchObject({ taken: 2, missed: 3, state: DAY_STATE.PARTIAL });
+  });
+
+  it('keeps a bar red when every dose in it was missed', () => {
+    const med = daily('a', ['08:00', '09:00']);
+    expect(dayAdherence([med], {}, WED, AFTER).bands.morning).toBe(DOSE.MISSED);
+  });
+
+  it('does not call taken + still-to-come partial', () => {
+    const med = daily('a', ['08:00', '11:00']);
+    const at9 = new Date('2026-08-05T09:00:00');
+    expect(dayAdherence([med], { a: [took('08:00')] }, WED, at9).bands.morning).toBe(DOSE.FUTURE);
   });
 
   it('leaves a bar empty when nothing is scheduled then', () => {

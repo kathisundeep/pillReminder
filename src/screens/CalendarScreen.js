@@ -15,6 +15,7 @@ import { getMyProfile } from '../utils/guardianCloud';
 import {
   DAY_STATE,
   DOSE,
+  PARTIAL,
   BANDS,
   SEGMENTS,
   windowFor,
@@ -45,10 +46,12 @@ const BAR = {
   [DOSE.SNOOZED]: '#e0f2fe',
   [DOSE.DUE]: '#fef3c7',
   [DOSE.FUTURE]: '#ffffff',
+  [PARTIAL]: '#ffedd5',
   none: '#f1f5f9',
 };
 const BAR_EDGE = {
   [DOSE.MISSED]: '#fca5a5',
+  [PARTIAL]: '#fdba74',
   [DOSE.SNOOZED]: '#7dd3fc',
   [DOSE.DUE]: '#fcd34d',
 };
@@ -89,6 +92,7 @@ const BADGE = {
 const LEGEND = [
   [DOSE.TAKEN, 'Taken'],
   [DOSE.MISSED, 'Missed'],
+  [PARTIAL, 'Partly taken'],
   [DOSE.SNOOZED, 'Snoozed'],
   [DOSE.DUE, 'Due now'],
   [DOSE.FUTURE, 'Not yet'],
@@ -99,6 +103,7 @@ const LEGEND = [
 const EXAMPLES = [
   [{ morning: DOSE.MISSED, afternoon: DOSE.TAKEN, night: DOSE.TAKEN }, 'Top red — missed the morning dose'],
   [{ morning: DOSE.TAKEN, afternoon: DOSE.MISSED, night: DOSE.TAKEN }, 'Middle red — missed the afternoon dose'],
+  [{ morning: PARTIAL, afternoon: DOSE.TAKEN, night: DOSE.TAKEN }, 'Orange top — some morning doses taken, some missed'],
   [{ morning: DOSE.TAKEN, afternoon: DOSE.MISSED, night: DOSE.FUTURE }, 'White — that dose is still to come'],
   [{ morning: DOSE.TAKEN, afternoon: DOSE.TAKEN, night: DOSE.TAKEN }, 'All green — every dose taken'],
 ];

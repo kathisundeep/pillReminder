@@ -126,6 +126,23 @@ describe('CalendarScreen', () => {
     expect(barColour('2026-08-19', 'morning')).toBe('#f1f5f9'); // nothing due
   });
 
+  // The reported case: five slots, only 9 AM and 9 PM taken.
+  it('shows a partly taken morning and night in orange', async () => {
+    const user = await signIn();
+    const id = await addMedicine(null, {
+      name: 'A', times: ['08:00', '09:00', '14:00', '20:00', '21:00'], startDate: '2026-08-04',
+    });
+    addedOn('2026-08-04');
+    dose(user, id, '2026-08-04', '09:00', 'taken');
+    dose(user, id, '2026-08-04', '21:00', 'taken');
+    await showScreen(CalendarScreen);
+
+    expect(barColour('2026-08-04', 'morning')).toBe('#ffedd5');
+    expect(barColour('2026-08-04', 'afternoon')).toBe('#fee2e2');
+    expect(barColour('2026-08-04', 'night')).toBe('#ffedd5');
+    expect(screen.getByText('Partly taken')).toBeTruthy();
+  });
+
   it('spells out a tapped day dose by dose', async () => {
     const { user, id } = await setup();
     dose(user, id, '2026-08-03', '20:00', 'taken');
