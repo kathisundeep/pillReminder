@@ -6,6 +6,7 @@ import {
   typeById,
   addReading,
   getReadings,
+  getUserReadings,
   deleteReading,
 } from '../utils/health';
 import ReadingChart from '../components/ReadingChart';
@@ -34,7 +35,12 @@ function whenLabel(iso) {
   });
 }
 
-export default function TrackersScreen({ navigation }) {
+// With `userId` in the route, a guardian is recording for that person. They
+// may add readings; deleting stays with the person.
+export default function TrackersScreen({ route, navigation }) {
+  const userId = route?.params?.userId || null;
+  const username = route?.params?.username || null;
+  const forSomeoneElse = !!userId;
   const [type, setType] = useState('bp');
   const [fields, setFields] = useState({});
   const [note, setNote] = useState('');
@@ -42,8 +48,8 @@ export default function TrackersScreen({ navigation }) {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    setReadings(await getReadings());
-  }, []);
+    setReadings(userId ? await getUserReadings(userId) : await getReadings());
+  }, [userId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -64,7 +70,7 @@ export default function TrackersScreen({ navigation }) {
     }
     setBusy(true);
     try {
-      await addReading(type, values, note.trim() || null);
+      await addReading(type, values, note.trim() || null, userId);
       setFields({});
       setNote('');
       await load();
@@ -91,7 +97,10 @@ export default function TrackersScreen({ navigation }) {
 
   return (
     <Screen>
-      <TitleHeader title="Health trackers" onClose={() => navigation.goBack()} />
+      <TitleHeader
+        title={forSomeoneElse ? `Reading for @${username || 'them'}` : 'Health trackers'}
+        onClose={() => navigation.goBack()}
+      />
       <Content>
         <Field label="What are you recording?">
           <ChipGroup>
@@ -147,7 +156,7 @@ export default function TrackersScreen({ navigation }) {
           <EmptyState
             icon="🩺"
             title="No readings yet"
-            body="Record your first measurement above."
+            body={forSomeoneElse ? 'Record a measurement for them above.' : 'Record your first measurement above.'}
           />
         ) : (
           readings.map((r) => {
@@ -156,8 +165,10 @@ export default function TrackersScreen({ navigation }) {
               <TouchableOpacity
                 key={r.id}
                 style={styles.readingRow}
-                onLongPress={() => onDelete(r)}
-                accessibilityLabel={`${t.label} reading. Long-press to delete.`}
+                onLongPress={forSomeoneElse ? undefined : () => onDelete(r)}
+                accessibilityLabel={
+                  forSomeoneElse ? `${t.label} reading` : `${t.label} reading. Long-press to delete.`
+                }
               >
                 <View style={{ flex: 1 }}>
                   <Text style={styles.readingVal}>
@@ -171,7 +182,7 @@ export default function TrackersScreen({ navigation }) {
             );
           })
         )}
-        {readings.length > 0 ? (
+        {readings.length > 0 && !forSomeoneElse ? (
           <Text style={styles.hint}>Long-press a reading to delete it.</Text>
         ) : null}
       </Content>

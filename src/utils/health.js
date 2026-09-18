@@ -113,19 +113,30 @@ export function typeById(id) {
   return READING_TYPES.find((t) => t.id === id) || READING_TYPES[0];
 }
 
-export async function addReading(type, values, note) {
+// `forUserId` is a linked guardian recording a reading for the person they
+// look after; the reading is theirs, recorded_by says who entered it.
+export async function addReading(type, values, note, forUserId = null) {
   const { data: u } = await localUser();
   if (!u?.user) throw new Error('not signed in');
   const t = typeById(type);
-  const { error } = await supabase.from('health_readings').insert({
-    user_id: u.user.id,
+  const row = {
+    user_id: forUserId || u.user.id,
     type,
     reading_values: values,
     unit: t.unit,
     note: note || null,
     measured_at: new Date().toISOString(),
-  });
-  if (error) throw error;
+  };
+  // Only sent on the guardian path: the column arrives with
+  // guardian_readings.sql, and the patient's own saves must not depend on it.
+  if (forUserId) row.recorded_by = u.user.id;
+  const { error } = await supabase.from('health_readings').insert(row);
+  if (error) {
+    if (forUserId && /row-level security|recorded_by/i.test(error.message || '')) {
+      throw new Error('Adding readings for someone else is not switched on yet (guardian_readings.sql).');
+    }
+    throw error;
+  }
 }
 
 // Normalise the row shape for callers: the column is reading_values in the

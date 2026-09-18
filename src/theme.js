@@ -172,6 +172,14 @@ export const DOSE_STATUS = {
   upcoming: { label: 'Upcoming', bg: colors.cardSubtle, text: colors.muted },
 };
 
+// Colours of a settled time slot, by how it went (see slotSummary).
+export const SUMMARY_TONE = {
+  taken: { bg: '#ecfdf5', pill: colors.takenBg, text: colors.takenText, border: '#a7f3d0' },
+  partial: { bg: '#fff7ed', pill: '#ffedd5', text: '#c2410c', border: '#fed7aa' },
+  skipped: { bg: '#fef2f2', pill: colors.skipBg, text: colors.skipText, border: '#fecaca' },
+  snoozed: { bg: '#f0f9ff', pill: colors.snoozeBg, text: colors.snoozeText, border: '#bae6fd' },
+};
+
 export function statusStyle(state) {
   return DOSE_STATUS[state] || DOSE_STATUS.upcoming;
 }

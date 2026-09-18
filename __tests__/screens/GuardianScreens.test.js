@@ -6,10 +6,14 @@ import GuardianScreen from '../../src/screens/GuardianScreen';
 import GuardianDashboardScreen from '../../src/screens/GuardianDashboardScreen';
 import GuardianUserScreen from '../../src/screens/GuardianUserScreen';
 import ApprovalsScreen from '../../src/screens/ApprovalsScreen';
+import CalendarScreen from '../../src/screens/CalendarScreen';
+import TrackersScreen from '../../src/screens/TrackersScreen';
+import { addReading } from '../../src/utils/health';
 import {
   registerUser,
   loginUser,
   addMedicine,
+  todayKey,
 } from '../../src/utils/storage';
 import { generatePairingCode } from '../../src/utils/guardianCloud';
 import { ROLES } from '../../src/utils/role';
@@ -260,7 +264,7 @@ describe('GuardianDashboardScreen', () => {
     expect(input.props.keyboardType).toBe('number-pad');
   });
 
-  it('offers the three actions for a linked person', async () => {
+  it('offers every action for a linked person', async () => {
     const alice = db().makeUser('alice');
     const bob = await signIn('bob');
     db().link(alice.id, bob.id);
@@ -268,21 +272,41 @@ describe('GuardianDashboardScreen', () => {
     const { navigation } = await showScreen(GuardianDashboardScreen, {
       role: ROLES.GUARDIAN,
     });
+    const person = { userId: alice.id, username: 'alice' };
 
-    await press('📋  View medicines');
-    expect(navigation.navigate).toHaveBeenCalledWith('GuardianUser', {
-      userId: alice.id, username: 'alice',
-    });
-
-    await press('📊  View health report');
-    expect(navigation.navigate).toHaveBeenCalledWith('HealthReport', {
-      userId: alice.id, username: 'alice',
-    });
-
-    await press('➕  Propose a medicine');
+    await press("💊  Today's medicines");
+    expect(navigation.navigate).toHaveBeenCalledWith('GuardianUser', person);
+    await press('🗓  Calendar');
+    expect(navigation.navigate).toHaveBeenCalledWith('Calendar', person);
+    await press('📄  Health report');
+    expect(navigation.navigate).toHaveBeenCalledWith('HealthReport', person);
+    await press('🩺  Add reading');
+    expect(navigation.navigate).toHaveBeenCalledWith('Trackers', person);
+    await press('➕  Propose');
     expect(navigation.navigate).toHaveBeenCalledWith('AddMedicine', {
       requestUserId: alice.id, requestUsername: 'alice',
     });
+  });
+
+  it('moves the code form off the dashboard once someone is linked', async () => {
+    const alice = db().makeUser('alice');
+    const bob = await signIn('bob');
+    db().link(alice.id, bob.id);
+
+    const { navigation } = await showScreen(GuardianDashboardScreen, {
+      role: ROLES.GUARDIAN,
+    });
+    expect(screen.queryByPlaceholderText('6-digit code')).toBeNull();
+
+    await press(screen.getByLabelText('Link another person'));
+    expect(navigation.navigate).toHaveBeenCalledWith('GuardianLink');
+  });
+
+  it('keeps no link icon while nobody is linked — the form is right there', async () => {
+    await signIn('bob');
+    await showScreen(GuardianDashboardScreen, { role: ROLES.GUARDIAN });
+    expect(screen.getByPlaceholderText('6-digit code')).toBeTruthy();
+    expect(screen.queryByLabelText('Link another person')).toBeNull();
   });
 
   it('offers no route into the patient flow', async () => {
@@ -321,10 +345,8 @@ describe('GuardianUserScreen', () => {
 
   it('titles the screen with the person`s handle', async () => {
     const { alice } = await linkedTo();
-    const { navigation } = await showScreen(GuardianUserScreen, {
-      params: { userId: alice.id, username: 'alice' },
-    });
-    expect(navigation.setOptions).toHaveBeenCalledWith({ title: '@alice' });
+    await showScreen(GuardianUserScreen, { params: { userId: alice.id, username: 'alice' } });
+    expect(screen.getByText('@alice')).toBeTruthy();
   });
 
   it('says when the person has no medicines', async () => {
@@ -333,16 +355,47 @@ describe('GuardianUserScreen', () => {
     expect(screen.getByText('No medicines yet')).toBeTruthy();
   });
 
-  it('lists the person`s medicines with times and settings', async () => {
+  it('groups today`s doses into time slots, as the person sees them', async () => {
     const { alice } = await linkedTo([
-      { name: 'Aspirin', times: ['08:00', '20:00'], form: 'Tablet', snoozeMinutes: 15, toneId: 'bell' },
+      { name: 'Aspirin', times: ['08:00', '20:00'], form: 'Tablet' },
+      { name: 'Metformin', times: ['08:00'] },
     ]);
     await showScreen(GuardianUserScreen, { params: { userId: alice.id, username: 'alice' } });
 
-    expect(screen.getByText('Aspirin')).toBeTruthy();
-    expect(screen.getByText('8:00 AM  •  8:00 PM')).toBeTruthy();
-    expect(screen.getByText(/Snooze 15 min/)).toBeTruthy();
-    expect(screen.getByText(/Tablet/)).toBeTruthy();
+    expect(screen.getByText('8:00 AM Slot')).toBeTruthy();
+    expect(screen.getByText('8:00 PM Slot')).toBeTruthy();
+    expect(screen.getAllByText('Aspirin')).toHaveLength(2);
+    expect(screen.getByText('Metformin')).toBeTruthy();
+  });
+
+  it('shows each dose`s status and a settled slot`s summary', async () => {
+    const { alice } = await linkedTo([
+      { name: 'Aspirin', times: ['08:00'] },
+      { name: 'Metformin', times: ['08:00'] },
+    ]);
+    const [a, m] = db().rows('medicines');
+    for (const med of [a, m]) {
+      db().rows('dose_history').push({
+        user_id: alice.id, medicine_id: med.id, day: todayKey(), slot: '08:00',
+        status: med === a ? 'taken' : 'skipped', at: new Date().toISOString(),
+      });
+    }
+    await showScreen(GuardianUserScreen, { params: { userId: alice.id, username: 'alice' } });
+
+    expect(screen.getByText('1 of 2 taken')).toBeTruthy();
+    expect(screen.getByText('✓ Taken')).toBeTruthy();
+    expect(screen.getByText('✕ Skipped')).toBeTruthy();
+  });
+
+  // The guardian must never set a dose's status — only the person can.
+  it('offers no way to change a dose', async () => {
+    const { alice } = await linkedTo([{ name: 'Aspirin', times: ['08:00'] }]);
+    await showScreen(GuardianUserScreen, { params: { userId: alice.id, username: 'alice' } });
+
+    expect(screen.getByText('View only')).toBeTruthy();
+    expect(screen.queryByLabelText(/Tap to change/)).toBeNull();
+    expect(screen.queryByText('Reschedule')).toBeNull();
+    expect(screen.queryByText('✗ Skip')).toBeNull();
   });
 
   it('shows a medicine photo instead of the colour dot', async () => {
@@ -355,20 +408,22 @@ describe('GuardianUserScreen', () => {
     expect(images.some((i) => i.props.source?.uri === 'data:image/jpeg;base64,GUARDIANVIEW')).toBe(true);
   });
 
-  it('opens the request form and the health report', async () => {
+  it('opens the calendar, report, readings and request form for the person', async () => {
     const { alice } = await linkedTo();
     const { navigation } = await showScreen(GuardianUserScreen, {
       params: { userId: alice.id, username: 'alice' },
     });
+    const person = { userId: alice.id, username: 'alice' };
 
-    await press('➕  Propose a medicine');
+    await press('Calendar');
+    expect(navigation.navigate).toHaveBeenCalledWith('Calendar', person);
+    await press('Health report');
+    expect(navigation.navigate).toHaveBeenCalledWith('HealthReport', person);
+    await press('Add reading');
+    expect(navigation.navigate).toHaveBeenCalledWith('Trackers', person);
+    await press('Propose');
     expect(navigation.navigate).toHaveBeenCalledWith('AddMedicine', {
       requestUserId: alice.id, requestUsername: 'alice',
-    });
-
-    await press('📄  View health report');
-    expect(navigation.navigate).toHaveBeenCalledWith('HealthReport', {
-      userId: alice.id, username: 'alice',
     });
   });
 
@@ -378,6 +433,53 @@ describe('GuardianUserScreen', () => {
 
     await showScreen(GuardianUserScreen, { params: { userId: alice.id, username: 'alice' } });
     expect(screen.getByText('No medicines yet')).toBeTruthy();
+  });
+});
+
+// ===========================================================================
+describe('Guardian — calendar and readings for a linked person', () => {
+  async function linked() {
+    const alice = db().makeUser('alice');
+    db().as(alice);
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    const bob = await signIn('bob');
+    db().link(alice.id, bob.id);
+    return { alice, bob };
+  }
+
+  it('shows the person`s calendar, not the guardian`s own', async () => {
+    const { alice } = await linked();
+    await showScreen(CalendarScreen, { params: { userId: alice.id, username: 'alice' } });
+
+    expect(screen.getAllByText('@alice · Adherence').length).toBeGreaterThan(0);
+    expect(screen.queryByText('No medicines yet')).toBeNull();
+  });
+
+  it('records a reading for the person, marked as entered by the guardian', async () => {
+    const { alice, bob } = await linked();
+    await showScreen(TrackersScreen, { params: { userId: alice.id, username: 'alice' } });
+    expect(screen.getByText('Reading for @alice')).toBeTruthy();
+
+    await addReading('sugar', { value: 110 }, null, alice.id);
+    const [row] = db().rows('health_readings');
+    expect(row).toMatchObject({ user_id: alice.id, recorded_by: bob.id });
+  });
+
+  it('refuses a reading for someone the guardian is not linked to', async () => {
+    const stranger = db().makeUser('stranger');
+    await signIn('bob');
+    await expect(addReading('sugar', { value: 110 }, null, stranger.id)).rejects.toThrow(
+      /not switched on yet|row-level/
+    );
+    expect(db().rows('health_readings')).toHaveLength(0);
+  });
+
+  it('offers no delete on the person`s readings', async () => {
+    const { alice } = await linked();
+    await addReading('sugar', { value: 110 }, null, alice.id);
+    await showScreen(TrackersScreen, { params: { userId: alice.id, username: 'alice' } });
+
+    expect(screen.queryByText('Long-press a reading to delete it.')).toBeNull();
   });
 });
 

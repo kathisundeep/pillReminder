@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getSession, logoutUser } from '../utils/storage';
 import { clearStoredRole, useRole } from '../utils/role';
-import { getLinkedUsers, pairWithCode } from '../utils/guardianCloud';
+import { getLinkedUsers } from '../utils/guardianCloud';
+import LinkPersonCard from '../components/LinkPersonCard';
 import { registerForPushTokenAsync, getPushRegistrationError } from '../utils/guardian';
 import {
   Screen,
@@ -25,9 +26,6 @@ export default function GuardianDashboardScreen({ navigation }) {
   const { setRole } = useRole();
   const [me, setMe] = useState(null);
   const [users, setUsers] = useState([]);
-  const [uname, setUname] = useState('');
-  const [code, setCode] = useState('');
-  const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [pushProblem, setPushProblem] = useState(null);
 
@@ -52,22 +50,6 @@ export default function GuardianDashboardScreen({ navigation }) {
     }, [load])
   );
 
-  const onPair = async () => {
-    if (!uname.trim() || !code.trim())
-      return Alert.alert('Missing', "Enter the person's username and their 6-digit code.");
-    setBusy(true);
-    const res = await pairWithCode(uname, code);
-    setBusy(false);
-    if (!res.ok) {
-      Alert.alert('Could not link', res.error || 'Invalid username or code.');
-      return;
-    }
-    setUname('');
-    setCode('');
-    Alert.alert('Linked', `You are now the guardian for ${res.user?.username || uname}.`);
-    load();
-  };
-
   const onLogout = async () => {
     await logoutUser();
     await clearStoredRole();
@@ -81,7 +63,18 @@ export default function GuardianDashboardScreen({ navigation }) {
         subtitle="Guardian Dashboard"
         role="guardian"
         right={
-          <IconButton label="🚪" accessibilityLabel="Log out" onPress={onLogout} />
+          <View style={styles.headerActions}>
+            {/* Once someone is linked the code form moves off the dashboard;
+                linking another person is one tap away here. */}
+            {users.length > 0 ? (
+              <IconButton
+                label="🔗"
+                accessibilityLabel="Link another person"
+                onPress={() => navigation.navigate('GuardianLink')}
+              />
+            ) : null}
+            <IconButton label="🚪" accessibilityLabel="Log out" onPress={onLogout} />
+          </View>
         }
       />
 
@@ -94,38 +87,7 @@ export default function GuardianDashboardScreen({ navigation }) {
           </Card>
         ) : null}
 
-        <Card>
-          <CardTitle>Link a person</CardTitle>
-          <CardSubtitle>
-            Ask them to open PillReminder → ♥ Guardian → "Generate pairing code",
-            then enter their username and the 6-digit code here.
-          </CardSubtitle>
-          <Field>
-            <Input
-              placeholder="Their username"
-              autoCapitalize="none"
-              autoCorrect={false}
-              value={uname}
-              onChangeText={setUname}
-            />
-          </Field>
-          <Field>
-            <Input
-              placeholder="6-digit code"
-              keyboardType="number-pad"
-              maxLength={6}
-              value={code}
-              onChangeText={setCode}
-              style={styles.codeInput}
-            />
-          </Field>
-          <Button
-            title={busy ? 'Linking…' : 'Link'}
-            onPress={onPair}
-            disabled={busy}
-            role="guardian"
-          />
-        </Card>
+        {!loading && users.length === 0 ? <LinkPersonCard onLinked={load} /> : null}
 
         <Text style={styles.listLabel}>People you look after</Text>
 
@@ -135,7 +97,7 @@ export default function GuardianDashboardScreen({ navigation }) {
           <EmptyState
             icon="🤝"
             title="No one linked yet"
-            body="Link a person above to start looking after them."
+            body="Use the form above to link the person you look after."
           />
         ) : (
           users.map((u) => (
@@ -150,8 +112,8 @@ export default function GuardianDashboardScreen({ navigation }) {
 
               <View style={styles.userActions}>
                 <Button
-                  title="📋  View medicines"
-                  variant="neutral"
+                  title="💊  Today's medicines"
+                  role="guardian"
                   onPress={() =>
                     navigation.navigate('GuardianUser', {
                       userId: u.userId,
@@ -159,26 +121,48 @@ export default function GuardianDashboardScreen({ navigation }) {
                     })
                   }
                 />
-                <Button
-                  title="📊  View health report"
-                  variant="neutral"
-                  onPress={() =>
-                    navigation.navigate('HealthReport', {
-                      userId: u.userId,
-                      username: u.username,
-                    })
-                  }
-                />
-                <Button
-                  title="➕  Propose a medicine"
-                  role="guardian"
-                  onPress={() =>
-                    navigation.navigate('AddMedicine', {
-                      requestUserId: u.userId,
-                      requestUsername: u.username,
-                    })
-                  }
-                />
+                <View style={styles.userActionRow}>
+                  <Button
+                    title="🗓  Calendar"
+                    variant="neutral"
+                    style={styles.half}
+                    onPress={() =>
+                      navigation.navigate('Calendar', { userId: u.userId, username: u.username })
+                    }
+                  />
+                  <Button
+                    title="📄  Health report"
+                    variant="neutral"
+                    style={styles.half}
+                    onPress={() =>
+                      navigation.navigate('HealthReport', {
+                        userId: u.userId,
+                        username: u.username,
+                      })
+                    }
+                  />
+                </View>
+                <View style={styles.userActionRow}>
+                  <Button
+                    title="🩺  Add reading"
+                    variant="neutral"
+                    style={styles.half}
+                    onPress={() =>
+                      navigation.navigate('Trackers', { userId: u.userId, username: u.username })
+                    }
+                  />
+                  <Button
+                    title="➕  Propose"
+                    variant="neutral"
+                    style={styles.half}
+                    onPress={() =>
+                      navigation.navigate('AddMedicine', {
+                        requestUserId: u.userId,
+                        requestUsername: u.username,
+                      })
+                    }
+                  />
+                </View>
               </View>
             </View>
           ))
@@ -200,7 +184,9 @@ export default function GuardianDashboardScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   pushWarning: { borderWidth: 1, borderColor: colors.danger },
-  codeInput: { letterSpacing: 6, fontWeight: '800', textAlign: 'center' },
+  headerActions: { flexDirection: 'row', gap: 8 },
+  userActionRow: { flexDirection: 'row', gap: 8 },
+  half: { flex: 1 },
   listLabel: {
     fontSize: 12,
     fontWeight: '800',

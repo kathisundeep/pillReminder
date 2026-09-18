@@ -11,7 +11,12 @@ import {
   Button,
 } from '../components/ui';
 import { getSession, getMedicines, getHistory } from '../utils/storage';
-import { getMyProfile } from '../utils/guardianCloud';
+import {
+  getMyProfile,
+  getUserMedicines,
+  getUserHistory,
+  getUserGraceMinutes,
+} from '../utils/guardianCloud';
 import {
   DAY_STATE,
   DOSE,
@@ -192,7 +197,11 @@ function DayDetail({ day }) {
   );
 }
 
-export default function CalendarScreen({ navigation }) {
+// With `userId` in the route, a guardian is looking at that person's calendar.
+export default function CalendarScreen({ route, navigation }) {
+  const userId = route?.params?.userId || null;
+  const username = route?.params?.username || null;
+  const heading = username ? `@${username} · Adherence` : 'Adherence Calendar';
   const [segment, setSegment] = useState('month');
   const [offset, setOffset] = useState(0);
   const [medicines, setMedicines] = useState([]);
@@ -202,6 +211,18 @@ export default function CalendarScreen({ navigation }) {
   const [selectedKey, setSelectedKey] = useState(() => dayKey(new Date()));
 
   const load = useCallback(async () => {
+    if (userId) {
+      const [meds, hist, g] = await Promise.all([
+        getUserMedicines(userId),
+        getUserHistory(userId),
+        getUserGraceMinutes(userId),
+      ]);
+      setMedicines(meds);
+      setHistory(hist);
+      setGrace(g);
+      setLoading(false);
+      return;
+    }
     const user = await getSession();
     if (!user) return setLoading(false);
     const [meds, hist, profile] = await Promise.all([
@@ -214,7 +235,7 @@ export default function CalendarScreen({ navigation }) {
     // The same allowance the guardian alert uses before calling a dose missed.
     setGrace(Number(profile?.settings?.graceMinutes) || 30);
     setLoading(false);
-  }, []);
+  }, [userId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -225,7 +246,7 @@ export default function CalendarScreen({ navigation }) {
   if (loading) {
     return (
       <Screen>
-        <TitleHeader title="Adherence Calendar" onClose={() => navigation.goBack()} />
+        <TitleHeader title={heading} onClose={() => navigation.goBack()} />
         <View style={styles.center}>
           <ActivityIndicator color={colors.emerald600} />
         </View>
@@ -265,7 +286,7 @@ export default function CalendarScreen({ navigation }) {
 
   return (
     <Screen>
-      <TitleHeader title="Adherence Calendar" onClose={() => navigation.goBack()} />
+      <TitleHeader title={heading} onClose={() => navigation.goBack()} />
       <Content>
         <Segmented
           value={segment}
@@ -413,7 +434,11 @@ export default function CalendarScreen({ navigation }) {
         <Button
           title="📄  Full health report"
           variant="neutral"
-          onPress={() => navigation.navigate('HealthReport')}
+          onPress={() =>
+            userId
+              ? navigation.navigate('HealthReport', { userId, username })
+              : navigation.navigate('HealthReport')
+          }
         />
       </Content>
     </Screen>

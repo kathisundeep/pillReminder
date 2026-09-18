@@ -1,4 +1,5 @@
 import { supabase, localUser } from './supabase';
+import { rowToMed, todayKey } from './storage';
 
 // Phase 1 guardian pairing — thin wrappers over the Postgres RPC functions in
 // supabase/pairing.sql. RLS + security-definer functions enforce all rules.
@@ -108,13 +109,60 @@ export async function getActiveGuardianTarget() {
 }
 
 // ---- Guardian reading a linked user's data ----
+// Read-only by design: RLS lets a linked guardian SELECT these, never write.
+
+// In the same shape the patient's own screens use (rowToMed), so the Today
+// list and the calendar can be drawn by the same code for either.
 export async function getUserMedicines(userId) {
   const { data } = await supabase
     .from('medicines')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
-  return data || [];
+  return (data || []).map((r) => rowToMed(r));
+}
+
+// One day's dose log for a linked user, grouped by medicine id.
+export async function getUserDayEntries(userId, day = todayKey()) {
+  const { data } = await supabase
+    .from('dose_history')
+    .select('medicine_id, status, at, slot')
+    .eq('user_id', userId)
+    .eq('day', day)
+    .order('at', { ascending: true });
+  const byMedicine = {};
+  for (const row of data || []) {
+    if (!byMedicine[row.medicine_id]) byMedicine[row.medicine_id] = [];
+    byMedicine[row.medicine_id].push(row);
+  }
+  return byMedicine;
+}
+
+// A linked user's whole dose log as { day: { medicineId: [entries] } } —
+// the shape the calendar reads.
+export async function getUserHistory(userId) {
+  const { data } = await supabase
+    .from('dose_history')
+    .select('medicine_id, day, status, at, slot')
+    .eq('user_id', userId);
+  const hist = {};
+  for (const r of data || []) {
+    if (!hist[r.day]) hist[r.day] = {};
+    if (!hist[r.day][r.medicine_id]) hist[r.day][r.medicine_id] = [];
+    hist[r.day][r.medicine_id].push({ status: r.status, at: r.at, slot: r.slot });
+  }
+  return hist;
+}
+
+// How late the person lets a dose run before it counts as missed. Their
+// setting, so the guardian sees exactly what the person sees.
+export async function getUserGraceMinutes(userId) {
+  const { data } = await supabase
+    .from('profiles')
+    .select('settings')
+    .eq('id', userId)
+    .maybeSingle();
+  return Number(data?.settings?.graceMinutes) || 30;
 }
 
 // ---- Action requests (guardian add-medicine → user approval) ----

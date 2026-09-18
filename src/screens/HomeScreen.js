@@ -33,11 +33,9 @@ import {
 import { resyncAlarmsFromCloud } from '../utils/sync';
 import { clearStoredRole, useRole } from '../utils/role';
 import { needsOnboarding } from '../utils/profile';
-import { doseOutcome, DOSE } from '../utils/adherence';
+import { buildDay } from '../utils/today';
 import {
   formatTime,
-  medState,
-  isDueToday,
   slotStatus,
   slotSummary,
 } from '../utils/doseState';
@@ -54,37 +52,9 @@ import ActionSheet from '../components/ActionSheet';
 import SwipeToDelete from '../components/SwipeToDelete';
 import StatusSelect from '../components/StatusSelect';
 import BottomBar from '../components/BottomBar';
-import { colors, radius, shadow, periodFor, formFor } from '../theme';
+import { colors, radius, shadow, periodFor, formFor, SUMMARY_TONE } from '../theme';
 
 const TIP_KEY = '@pr_tip_home_gestures';
-
-// Home's picture of today: one card per time, each dose with its state.
-function buildDay(list, entriesByMedicine, now, grace) {
-  const slotMap = {}; // time -> [{med, slot, state}]
-  const off = [];
-  for (const med of list) {
-    if (!isDueToday(med, now)) {
-      off.push(med);
-      continue;
-    }
-    const entries = entriesByMedicine[med.id] || [];
-    // Each scheduled time is its own dose, so a morning dose being taken
-    // leaves the evening one still pending.
-    for (const t of med.times || []) {
-      if (!slotMap[t]) slotMap[t] = [];
-      let state = medState(med, entries, now, t);
-      // A dose left unanswered past its time and grace is missed, not due.
-      if (state === 'pending' && doseOutcome(med, entries, t, now, now, grace) === DOSE.MISSED) {
-        state = 'missed';
-      }
-      slotMap[t].push({ med, slot: t, state });
-    }
-  }
-  const slots = Object.keys(slotMap)
-    .sort()
-    .map((t) => ({ time: t, items: slotMap[t] }));
-  return { slots, off };
-}
 
 function todayLabel(now) {
   return now.toLocaleDateString([], {
@@ -601,14 +571,6 @@ export default function HomeScreen({ navigation }) {
     </Screen>
   );
 }
-
-// Colours of a settled slot, by how it went.
-const SUMMARY_TONE = {
-  taken: { bg: '#ecfdf5', pill: colors.takenBg, text: colors.takenText, border: '#a7f3d0' },
-  partial: { bg: '#fff7ed', pill: '#ffedd5', text: '#c2410c', border: '#fed7aa' },
-  skipped: { bg: '#fef2f2', pill: colors.skipBg, text: colors.skipText, border: '#fecaca' },
-  snoozed: { bg: '#f0f9ff', pill: colors.snoozeBg, text: colors.snoozeText, border: '#bae6fd' },
-};
 
 const styles = StyleSheet.create({
   headerActions: { flexDirection: 'row', gap: 8 },

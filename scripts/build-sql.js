@@ -23,6 +23,7 @@ const ORDER = [
   'hardening.sql',
   'onboarding.sql',
   'course.sql',
+  'guardian_readings.sql',
 ];
 
 const HEADER = `-- PillReminder — every migration, in dependency order, as one script.

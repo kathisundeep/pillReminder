@@ -15,6 +15,7 @@ import AlarmScreen from './src/screens/AlarmScreen';
 import GuardianScreen from './src/screens/GuardianScreen';
 import GuardianDashboardScreen from './src/screens/GuardianDashboardScreen';
 import GuardianUserScreen from './src/screens/GuardianUserScreen';
+import GuardianLinkScreen from './src/screens/GuardianLinkScreen';
 import ApprovalsScreen from './src/screens/ApprovalsScreen';
 import TrackersScreen from './src/screens/TrackersScreen';
 import HealthReportScreen from './src/screens/HealthReportScreen';
@@ -194,7 +195,19 @@ export default function App() {
               <Stack.Screen
                 name="GuardianUser"
                 component={GuardianUserScreen}
-                options={{ title: 'Medicines' }}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="GuardianLink"
+                component={GuardianLinkScreen}
+                options={{ headerShown: false }}
+              />
+              {/* Only ever opened for a linked person: a guardian records a
+                  reading for them. */}
+              <Stack.Screen
+                name="Trackers"
+                component={TrackersScreen}
+                options={{ headerShown: false }}
               />
               <Stack.Screen
                 name="AddMedicine"

@@ -143,7 +143,9 @@ export function createFakeSupabase(options = {}) {
     profiles: (r, me) => r.id === me,
     medicines: (r, me) => r.user_id === me,
     dose_history: (r, me) => r.user_id === me,
-    health_readings: (r, me) => r.user_id === me,
+    // guardian_readings.sql: a linked guardian may add, recorded under their id.
+    health_readings: (r, me) =>
+      r.user_id === me || (r.recorded_by === me && isLinkedGuardian(r.user_id, me)),
     pairing_codes: (r, me) => r.user_id === me,
     // Matches schema.sql: guardian may insert if they are an active guardian.
     action_requests: (r, me) =>
