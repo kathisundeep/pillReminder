@@ -24,6 +24,8 @@ const ORDER = [
   'onboarding.sql',
   'course.sql',
   'guardian_readings.sql',
+  'plans_v2.sql',
+  'guardian_session.sql',
 ];
 
 const HEADER = `-- PillReminder — every migration, in dependency order, as one script.

@@ -14,7 +14,7 @@ import {
   importLocalMedicinesOnce,
 } from '../utils/storage';
 import { resyncAlarmsFromCloud } from '../utils/sync';
-import { getMyProfile } from '../utils/guardianCloud';
+import { getMyProfile, claimGuardianSession } from '../utils/guardianCloud';
 import { ROLES, roleMatchesAccount, useRole } from '../utils/role';
 import { Button, Field, Input, Segmented } from '../components/ui';
 import { buildLabel } from '../utils/updates';
@@ -56,6 +56,12 @@ export default function LoginScreen({ navigation }) {
             : `@${profile.username} is a guardian account. Choose "I'm a guardian" to sign in.`
         );
         return;
+      }
+
+      // One phone per guardian account: signing in here signs the account
+      // out everywhere else and stops alerts going to the old phone.
+      if (wantedRole === ROLES.GUARDIAN) {
+        await claimGuardianSession();
       }
 
       if (wantedRole === ROLES.PATIENT) {

@@ -168,15 +168,6 @@ export default function GuardianDashboardScreen({ navigation }) {
           ))
         )}
 
-        {/* A guardian raises requests but had nowhere to see what happened to
-            them — the screen existed and was simply not reachable from this
-            half of the app. */}
-        <Button
-          title="📩  Requests you've sent"
-          variant="neutral"
-          role="guardian"
-          onPress={() => navigation.navigate('Approvals')}
-        />
       </Content>
     </Screen>
   );

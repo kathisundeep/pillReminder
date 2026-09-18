@@ -19,15 +19,23 @@ import {
   getMyOutgoingRequests,
   setRequestStatus,
   getLinkedUsers,
+  claimGuardianSession,
+  checkGuardianSession,
+  getMyGuardians,
+  removeGuardian,
+  getMyGuardianAllowance,
 } from '../../src/utils/guardianCloud';
 
 const db = () => globalThis.__db;
 
 // alice = patient, bob = alice's guardian, mallory = unrelated.
-function cast() {
+// Alice has a 1-guardian plan unless a test says otherwise: without one she
+// could not have a guardian at all (plans_v2.sql).
+function cast({ plan = 'g1_m1' } = {}) {
   const alice = db().makeUser('alice');
   const bob = db().makeUser('bob');
   const mallory = db().makeUser('mallory');
+  if (plan) db().subscribe(alice.id, plan);
   return { alice, bob, mallory };
 }
 
@@ -182,7 +190,20 @@ describe('pairWithCode', () => {
     expect(res.ok).toBe(false);
   });
 
-  it('replaces the previous guardian on the free plan (limit 1)', async () => {
+  it('refuses any guardian when the person has no plan', async () => {
+    const { alice, bob } = cast({ plan: null });
+    const code = await codeFor(alice);
+    db().as(bob);
+
+    const res = await pairWithCode('alice', code);
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/needs a plan that includes a guardian/);
+    expect(db().rows('guardian_links')).toHaveLength(0);
+    // The code is not used up by a refusal.
+    expect(db().rows('pairing_codes')[0].status).toBe('active');
+  });
+
+  it('refuses a second guardian on a 1-guardian plan, keeping the first', async () => {
     const { alice, bob, mallory } = cast();
 
     const first = await codeFor(alice);
@@ -191,20 +212,24 @@ describe('pairWithCode', () => {
 
     const second = await codeFor(alice);
     db().as(mallory);
-    await pairWithCode('alice', second);
+    const res = await pairWithCode('alice', second);
 
-    const links = db().rows('guardian_links');
-    const active = links.filter((l) => l.status === 'active');
-    expect(active).toHaveLength(1);
-    expect(active[0].guardian_id).toBe(mallory.id);
-    expect(links.find((l) => l.guardian_id === bob.id).status).toBe('deactivated');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/plan allows 1 guardian/);
+    const active = db().rows('guardian_links').filter((l) => l.status === 'active');
+    expect(active.map((l) => l.guardian_id)).toEqual([bob.id]);
   });
 
-  it('allows a second guardian once the plan raises the limit', async () => {
-    const { alice, bob, mallory } = cast();
-    db().seed('subscriptions', [
-      { user_id: alice.id, plan_id: 'family', status: 'active' },
-    ]);
+  it('refuses a guardian once the plan has expired', async () => {
+    const { alice, bob } = cast();
+    db().rows('subscriptions')[0].current_period_end = '2000-01-01T00:00:00.000Z';
+    const code = await codeFor(alice);
+    db().as(bob);
+    expect((await pairWithCode('alice', code)).ok).toBe(false);
+  });
+
+  it('allows a second guardian on a 2-guardian plan', async () => {
+    const { alice, bob, mallory } = cast({ plan: 'g2_m3' });
 
     const first = await codeFor(alice);
     db().as(bob);
@@ -590,5 +615,93 @@ describe('action requests', () => {
     expect(outgoing).toHaveLength(1);
     expect(outgoing[0].user_id).toBe(alice.id);
     expect(outgoing[0].status).toBe('pending');
+  });
+});
+
+describe('one phone per guardian account', () => {
+  // Bob is a guardian of Alice; "phone A" and "phone B" are two sign-ins.
+  function setup() {
+    const alice = db().makeUser('alice');
+    const bob = db().makeUser('bob', { is_guardian: true });
+    db().link(alice.id, bob.id);
+    db().seed('medicines', [{ user_id: alice.id, name: 'Aspirin', times: ['08:00'] }]);
+    const profile = () => db().rows('profiles').find((p) => p.id === bob.id);
+    return { alice, bob, profile };
+  }
+
+  it('claims the account for the phone that signs in, clearing the old push address', async () => {
+    const { bob, profile } = setup();
+    profile().push_token = 'ExponentPushToken[phoneA]';
+    db().as(bob, 'phone-B');
+
+    await claimGuardianSession();
+
+    expect(profile().active_session_id).toBe('phone-B');
+    expect(profile().push_token).toBeNull();
+  });
+
+  it('tells the old phone it was replaced', async () => {
+    const { bob } = setup();
+    db().as(bob, 'phone-A');
+    await claimGuardianSession();
+    expect(await checkGuardianSession()).toBe('ok');
+
+    db().as(bob, 'phone-B');
+    await claimGuardianSession();
+
+    db().as(bob, 'phone-A');
+    expect(await checkGuardianSession()).toBe('replaced');
+  });
+
+  it('shows the old phone none of the person`s data', async () => {
+    const { alice, bob } = setup();
+    db().as(bob, 'phone-A');
+    await claimGuardianSession();
+    expect(await getUserMedicines(alice.id)).toHaveLength(1);
+
+    db().as(bob, 'phone-B');
+    await claimGuardianSession();
+    db().as(bob, 'phone-A');
+    expect(await getUserMedicines(alice.id)).toEqual([]);
+
+    db().as(bob, 'phone-B');
+    expect(await getUserMedicines(alice.id)).toHaveLength(1);
+  });
+
+  it('claims an unclaimed account on first check (e.g. a new sign-up)', async () => {
+    const { bob, profile } = setup();
+    db().as(bob, 'phone-A');
+    expect(await checkGuardianSession()).toBe('ok');
+    expect(profile().active_session_id).toBe('phone-A');
+  });
+
+  it('never restricts a patient account', async () => {
+    const { alice } = setup();
+    db().as(alice, 'phone-A');
+    expect(await checkGuardianSession()).toBe('ok');
+  });
+});
+
+describe('several guardians', () => {
+  it('lists each linked guardian and removes one at a time', async () => {
+    const alice = db().makeUser('alice');
+    const bob = db().makeUser('bob');
+    const carol = db().makeUser('carol');
+    db().subscribe(alice.id, 'g2_m1');
+    db().link(alice.id, bob.id);
+    db().link(alice.id, carol.id);
+    db().as(alice);
+
+    expect((await getMyGuardians()).map((g) => g.username).sort()).toEqual(['bob', 'carol']);
+    expect(await getMyGuardianAllowance()).toEqual({ limit: 2, used: 2 });
+
+    await removeGuardian(bob.id);
+    expect((await getMyGuardians()).map((g) => g.username)).toEqual(['carol']);
+  });
+
+  it('reports no allowance without a plan', async () => {
+    const alice = db().makeUser('alice');
+    db().as(alice);
+    expect(await getMyGuardianAllowance()).toEqual({ limit: 0, used: 0 });
   });
 });

@@ -110,6 +110,8 @@ export function createFakeSupabase(options = {}) {
   const uid = () => db.session?.user?.id || null;
 
   // ---- RLS policy simulation (mirrors supabase/schema.sql) ----------------
+  // guardian_session.sql: a guardian phone whose account was claimed by
+  // another sign-in is no longer anyone's guardian.
   const isLinkedGuardian = (targetUserId, guardianId) =>
     !!guardianId &&
     db.tables.guardian_links.some(
@@ -117,7 +119,9 @@ export function createFakeSupabase(options = {}) {
         l.user_id === targetUserId &&
         l.guardian_id === guardianId &&
         l.status === 'active'
-    );
+    ) &&
+    // eslint-disable-next-line no-use-before-define
+    sessionIsCurrent(guardianId);
 
   const POLICIES = {
     profiles: (r, me) =>
@@ -364,16 +368,34 @@ export function createFakeSupabase(options = {}) {
   }
 
   // ---- RPCs (mirror supabase/pairing.sql + subscriptions.sql) ------------
+  // plans_v2.sql: the largest active, unexpired plan; 0 without one.
   const guardianLimit = (targetUser) => {
     const subs = db.tables.subscriptions.filter(
-      (s) => s.user_id === targetUser && s.status === 'active'
+      (s) =>
+        s.user_id === targetUser &&
+        s.status === 'active' &&
+        (!s.current_period_end || new Date(s.current_period_end) > new Date())
     );
     let max = 0;
     for (const s of subs) {
       const plan = db.tables.plans.find((p) => p.id === s.plan_id);
       if (plan && plan.max_guardians > max) max = plan.max_guardians;
     }
-    return max || 1;
+    return max;
+  };
+
+  // guardian_session.sql: a guardian whose account another session claimed.
+  const sessionIsCurrent = (me) => {
+    const p = db.tables.profiles.find((x) => x.id === me);
+    if (!p || !p.is_guardian || !p.active_session_id) return true;
+    return p.active_session_id === db.session?.session_id;
+  };
+  const claimSession = (me) => {
+    const p = db.tables.profiles.find((x) => x.id === me);
+    if (p && p.is_guardian) {
+      p.active_session_id = db.session?.session_id || null;
+      p.push_token = null;
+    }
   };
 
   const rpcHandlers = {
@@ -440,15 +462,15 @@ export function createFakeSupabase(options = {}) {
           l.guardian_id !== gid
       ).length;
 
+      if (lim === 0) {
+        throw new Error(
+          `@${target_username} needs a plan that includes a guardian. They can choose one in Settings → Plans.`
+        );
+      }
       if (activeCt >= lim) {
-        if (lim === 1) {
-          for (const l of db.tables.guardian_links) {
-            if (l.user_id === target.id && l.status === 'active')
-              l.status = 'deactivated';
-          }
-        } else {
-          throw new Error(`guardian limit reached (${lim}).`);
-        }
+        throw new Error(
+          `@${target_username}'s plan allows ${lim} guardian(s), and that many are linked. They can upgrade or remove one.`
+        );
       }
 
       pc.status = 'consumed';
@@ -480,6 +502,53 @@ export function createFakeSupabase(options = {}) {
       return !db.tables.profiles.some(
         (p) => p.phone === candidate && !!p.is_guardian === !!want_guardian
       );
+    },
+    guardian_limit({ target_user }) {
+      return guardianLimit(target_user);
+    },
+    mock_activate_plan({ plan }) {
+      const me = uid();
+      if (!me) throw new Error('not authenticated');
+      if (!db.mockPayments) throw new Error('Test payments are switched off.');
+      const p = db.tables.plans.find((x) => x.id === plan && x.active && x.months > 0);
+      if (!p) throw new Error('That plan is not available.');
+      for (const s of db.tables.subscriptions) {
+        if (s.user_id === me && s.status === 'active') s.status = 'canceled';
+      }
+      const ends = new Date();
+      ends.setMonth(ends.getMonth() + p.months);
+      db.tables.subscriptions.push({
+        id: fakeUuid(), user_id: me, plan_id: p.id, status: 'active', provider: 'test',
+        provider_ref: `TEST-${fakeUuid()}`, auto_renew: false,
+        current_period_end: ends.toISOString(), created_at: nextStamp(),
+      });
+      return { plan_id: p.id, current_period_end: ends.toISOString() };
+    },
+    remove_guardian({ guardian }) {
+      const me = uid();
+      if (!me) throw new Error('not authenticated');
+      for (const l of db.tables.guardian_links) {
+        if (l.user_id === me && l.guardian_id === guardian && l.status === 'active')
+          l.status = 'deactivated';
+      }
+      return null;
+    },
+    claim_guardian_session() {
+      const me = uid();
+      if (!me) throw new Error('not authenticated');
+      claimSession(me);
+      return null;
+    },
+    guardian_session_check() {
+      const me = uid();
+      if (!me) return 'ok';
+      const p = db.tables.profiles.find((x) => x.id === me);
+      if (!p || !p.is_guardian) return 'ok';
+      if (!p.active_session_id) {
+        claimSession(me);
+        return 'ok';
+      }
+      return sessionIsCurrent(me) ? 'ok' : 'replaced';
     },
     revoke_guardian() {
       const me = uid();
@@ -534,10 +603,13 @@ export function createFakeSupabase(options = {}) {
       );
       if (!user)
         return { data: null, error: { message: 'Invalid login credentials' } };
-      db.session = { user };
+      // Each sign-in is a new auth session, as its access token's session_id.
+      db.session = { user, session_id: fakeUuid() };
       return { data: { user, session: db.session }, error: null };
     },
-    async signOut() {
+    async signOut(opts) {
+      // scope 'others' revokes the OTHER sessions; this one stays signed in.
+      if (opts?.scope === 'others') return { error: null };
       db.session = null;
       return { error: null };
     },
@@ -598,8 +670,12 @@ export function createFakeSupabase(options = {}) {
     return db.tables[table];
   };
   db.rows = (table) => db.tables[table];
-  db.as = (user) => {
-    db.session = user ? { user: typeof user === 'string' ? { id: user } : user } : null;
+  // `sessionId` stands for a particular phone's login (the access token's
+  // session_id), for the one-phone-per-guardian rules.
+  db.as = (user, sessionId) => {
+    db.session = user
+      ? { user: typeof user === 'string' ? { id: user } : user, session_id: sessionId }
+      : null;
   };
   db.signedInAs = () => uid();
   db.failOn = (table, op, error) => {

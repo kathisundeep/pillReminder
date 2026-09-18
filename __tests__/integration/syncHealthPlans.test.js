@@ -10,6 +10,7 @@ import {
   getPlans,
   getMyPlan,
   requestPlanChange,
+  activateTestPlan,
 } from '../../src/utils/subscription';
 import {
   registerUser,
@@ -228,15 +229,67 @@ describe('health readings', () => {
 });
 
 describe('plans and subscriptions', () => {
-  it('lists the seeded plan catalog cheapest-first', async () => {
-    expect((await getPlans()).map((p) => p.id)).toEqual(['free', 'plus', 'family']);
+  it('lists the twelve plans on sale, by length then guardians', async () => {
+    expect((await getPlans()).map((p) => p.id)).toEqual([
+      'g1_m1', 'g2_m1', 'g3_m1',
+      'g1_m3', 'g2_m3', 'g3_m3',
+      'g1_m6', 'g2_m6', 'g3_m6',
+      'g1_m12', 'g2_m12', 'g3_m12',
+    ]);
   });
 
-  it('falls back to a synthetic Free plan when the catalog is empty', async () => {
+  it('prices a month at ₹150 / ₹250 / ₹300 for 1 / 2 / 3 guardians', async () => {
+    const monthly = (await getPlans()).filter((p) => p.months === 1);
+    expect(monthly.map((p) => p.price_cents / 100)).toEqual([150, 250, 300]);
+  });
+
+  it('lists nothing when the catalog is empty', async () => {
     db().tables.plans.length = 0;
-    const plans = await getPlans();
-    expect(plans).toHaveLength(1);
-    expect(plans[0]).toMatchObject({ id: 'free', price_cents: 0, max_guardians: 1 });
+    expect(await getPlans()).toEqual([]);
+  });
+
+  it('gives Free no guardians', async () => {
+    expect((await getMyPlan()).max_guardians).toBe(0);
+  });
+
+  it('activates a plan through the test checkout, for its length', async () => {
+    const user = await signedIn();
+    const res = await activateTestPlan('g2_m3');
+    expect(res.ok).toBe(true);
+
+    const plan = await getMyPlan();
+    expect(plan).toMatchObject({ id: 'g2_m3', max_guardians: 2 });
+    const months = (new Date(plan.current_period_end) - new Date()) / (30.5 * 86400000);
+    expect(Math.round(months)).toBe(3);
+    expect(db().rows('subscriptions').filter((x) => x.user_id === user.id)).toHaveLength(1);
+  });
+
+  it('replaces the current plan with a new purchase', async () => {
+    await signedIn();
+    await activateTestPlan('g1_m1');
+    await activateTestPlan('g3_m12');
+    expect((await getMyPlan()).id).toBe('g3_m12');
+    expect(db().rows('subscriptions').filter((x) => x.status === 'active')).toHaveLength(1);
+  });
+
+  it('refuses a retired plan at checkout', async () => {
+    await signedIn();
+    const res = await activateTestPlan('family');
+    expect(res.ok).toBe(false);
+    expect((await getMyPlan()).id).toBe('free');
+  });
+
+  it('refuses the test checkout once it is switched off', async () => {
+    await signedIn();
+    db().mockPayments = false;
+    expect((await activateTestPlan('g1_m1')).ok).toBe(false);
+  });
+
+  it('treats an expired plan as Free', async () => {
+    const user = await signedIn();
+    db().subscribe(user.id, 'g1_m1');
+    db().rows('subscriptions')[0].current_period_end = '2000-01-01T00:00:00.000Z';
+    expect((await getMyPlan()).id).toBe('free');
   });
 
   it('reports Free for a signed-out user', async () => {
@@ -252,16 +305,16 @@ describe('plans and subscriptions', () => {
     const user = await signedIn();
     db().seed('subscriptions', [
       {
-        user_id: user.id, plan_id: 'plus', status: 'active',
-        auto_renew: true, current_period_end: '2025-12-31T00:00:00.000Z',
+        user_id: user.id, plan_id: 'g3_m12', status: 'active',
+        auto_renew: true, current_period_end: '2099-12-31T00:00:00.000Z',
       },
     ]);
 
     const plan = await getMyPlan();
-    expect(plan.id).toBe('plus');
+    expect(plan.id).toBe('g3_m12');
     expect(plan.max_guardians).toBe(3);
     expect(plan.auto_renew).toBe(true);
-    expect(plan.current_period_end).toBe('2025-12-31T00:00:00.000Z');
+    expect(plan.current_period_end).toBe('2099-12-31T00:00:00.000Z');
   });
 
   it('ignores a cancelled subscription', async () => {

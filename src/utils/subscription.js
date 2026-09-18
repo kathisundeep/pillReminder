@@ -1,16 +1,20 @@
 import { supabase, localUser } from './supabase';
 
-const FREE = { id: 'free', name: 'Free', price_cents: 0, currency: 'INR', interval: 'month', max_guardians: 1, features: {} };
+// No plan: no guardians (plans_v2.sql).
+const FREE = { id: 'free', name: 'Free', price_cents: 0, currency: 'INR', interval: 'month', max_guardians: 0, months: 0, features: {} };
 
+export const PLAN_MONTHS = [1, 3, 6, 12];
+
+// The plans on sale — months × guardians — ordered by length, then size.
+// Free is not "bought", so it is not listed.
 export async function getPlans() {
-  const { data } = await supabase
-    .from('plans')
-    .select('*')
-    .order('price_cents', { ascending: true });
-  return data && data.length ? data : [FREE];
+  const { data } = await supabase.from('plans').select('*');
+  return (data || [])
+    .filter((p) => p.active !== false && p.months > 0)
+    .sort((a, b) => a.months - b.months || a.max_guardians - b.max_guardians);
 }
 
-// The user's current active plan (defaults to Free).
+// The user's current plan, while it lasts (defaults to Free).
 export async function getMyPlan() {
   const { data: u } = await localUser();
   if (!u?.user) return FREE;
@@ -23,7 +27,21 @@ export async function getMyPlan() {
     .limit(1)
     .maybeSingle();
   if (!data?.plans) return FREE;
+  if (data.current_period_end && new Date(data.current_period_end) <= new Date()) return FREE;
   return { ...data.plans, auto_renew: data.auto_renew, current_period_end: data.current_period_end };
+}
+
+// TEST checkout: activates the plan without taking money (mock_activate_plan).
+// Real payments will replace this with a provider checkout + verified webhook.
+export async function activateTestPlan(planId) {
+  const { data, error } = await supabase.rpc('mock_activate_plan', { plan: planId });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, ...(data || {}) };
+}
+
+export function formatPrice(plan) {
+  const sym = plan.currency === 'INR' ? '₹' : '$';
+  return `${sym}${Math.round(plan.price_cents / 100).toLocaleString('en-IN')}`;
 }
 
 // Activating a plan is a SERVER decision, made after a verified payment.

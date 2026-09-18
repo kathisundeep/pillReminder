@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Alert } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Notifications from 'expo-notifications';
@@ -21,7 +21,7 @@ import TrackersScreen from './src/screens/TrackersScreen';
 import HealthReportScreen from './src/screens/HealthReportScreen';
 import CalendarScreen from './src/screens/CalendarScreen';
 import PlansScreen from './src/screens/PlansScreen';
-import { getSession, pruneOldHistory } from './src/utils/storage';
+import { getSession, pruneOldHistory, logoutUser } from './src/utils/storage';
 import { ensureNotificationSetup } from './src/utils/notifications';
 import {
   registerForPushTokenAsync,
@@ -30,7 +30,14 @@ import {
 } from './src/utils/guardian';
 import { alarmMedicineIds, applyAlarmAction } from './src/utils/alarmActions';
 import { resyncAlarmsFromCloud } from './src/utils/sync';
-import { ROLES, RoleProvider, resolveRole, getStoredRole } from './src/utils/role';
+import {
+  ROLES,
+  RoleProvider,
+  resolveRole,
+  getStoredRole,
+  clearStoredRole,
+} from './src/utils/role';
+import { checkGuardianSession } from './src/utils/guardianCloud';
 import { applyUpdateIfAny } from './src/utils/updates';
 import ErrorBoundary from './src/components/ErrorBoundary';
 
@@ -42,6 +49,33 @@ export default function App() {
   // landing screen but which screens exist at all.
   const [role, setRole] = useState(null);
   const navRef = useRef(null);
+
+  // One phone per guardian account. If another phone has signed in to it,
+  // sign out here — the server has already stopped sending this phone the
+  // people's data and alerts.
+  useEffect(() => {
+    if (role !== ROLES.GUARDIAN) return undefined;
+    let stopped = false;
+    const check = async () => {
+      if (stopped || (await checkGuardianSession()) !== 'replaced' || stopped) return;
+      stopped = true;
+      await logoutUser();
+      await clearStoredRole();
+      setRole(null);
+      Alert.alert(
+        'Signed out',
+        'This guardian account was just signed in on another phone. A guardian account can be used on one phone at a time.'
+      );
+    };
+    check();
+    const sub = AppState.addEventListener('change', (st) => st === 'active' && check());
+    const timer = setInterval(check, 60000);
+    return () => {
+      stopped = true;
+      sub.remove();
+      clearInterval(timer);
+    };
+  }, [role]);
 
   useEffect(() => {
     (async () => {

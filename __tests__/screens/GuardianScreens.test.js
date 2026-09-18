@@ -32,28 +32,57 @@ beforeEach(() => {
 
 // ===========================================================================
 describe('GuardianScreen (patient side)', () => {
-  it('shows there is no guardian yet', async () => {
-    await signIn('alice');
+  // A patient with a plan: the default here is room for one guardian.
+  async function patient({ plan = 'g1_m1' } = {}) {
+    const alice = await signIn('alice');
+    if (plan) db().subscribe(alice.id, plan);
+    return alice;
+  }
+
+  it('shows there is no guardian yet, and the invite', async () => {
+    await patient();
     await showScreen(GuardianScreen);
-    expect(screen.getByText('Your guardian')).toBeTruthy();
+    expect(screen.getByText('Your guardians')).toBeTruthy();
+    expect(screen.getByText('Your plan allows 1 guardian · 0 linked')).toBeTruthy();
     expect(screen.getByText(/No guardian linked yet/)).toBeTruthy();
     expect(screen.getByText('Invite a guardian')).toBeTruthy();
   });
 
-  it('shows the linked guardian and switches to "change" wording', async () => {
-    const alice = await signIn('alice');
-    const bob = db().makeUser('bob', { display_name: 'Bob Kumar' });
-    db().link(alice.id, bob.id);
+  it('sends a user with no plan to the plans instead of offering a code', async () => {
+    await patient({ plan: null });
+    const { navigation } = await showScreen(GuardianScreen);
 
+    expect(screen.getByText('Your plan does not include a guardian.')).toBeTruthy();
+    expect(screen.queryByText('Generate pairing code')).toBeNull();
+    await press('See plans');
+    expect(navigation.navigate).toHaveBeenCalledWith('Plans');
+  });
+
+  it('says the plan is full once every place is taken', async () => {
+    const alice = await patient();
+    db().link(alice.id, db().makeUser('bob', { display_name: 'Bob Kumar' }).id);
     await showScreen(GuardianScreen);
+
     expect(screen.getByText('Bob Kumar')).toBeTruthy();
     expect(screen.getByText('@bob · linked')).toBeTruthy();
-    expect(screen.getByText('Change guardian')).toBeTruthy();
-    expect(screen.getByText('Remove guardian')).toBeTruthy();
+    expect(screen.getByText('Your plan is full')).toBeTruthy();
+    expect(screen.queryByText('Generate pairing code')).toBeNull();
+  });
+
+  it('lists every guardian on a bigger plan, with room for more', async () => {
+    const alice = await patient({ plan: 'g3_m6' });
+    db().link(alice.id, db().makeUser('bob').id);
+    db().link(alice.id, db().makeUser('carol').id);
+    await showScreen(GuardianScreen);
+
+    expect(screen.getByText('@bob · linked')).toBeTruthy();
+    expect(screen.getByText('@carol · linked')).toBeTruthy();
+    expect(screen.getByText('Your plan allows 3 guardians · 2 linked')).toBeTruthy();
+    expect(screen.getByText('Invite a guardian')).toBeTruthy();
   });
 
   it('generates a 6-digit pairing code on demand', async () => {
-    await signIn('alice');
+    await patient();
     await showScreen(GuardianScreen);
 
     await press('Generate pairing code');
@@ -64,7 +93,7 @@ describe('GuardianScreen (patient side)', () => {
   });
 
   it('shares an invite containing the username and code', async () => {
-    await signIn('alice');
+    await patient();
     await showScreen(GuardianScreen);
     await press('Generate pairing code');
     await press('Share invite');
@@ -76,44 +105,48 @@ describe('GuardianScreen (patient side)', () => {
   });
 
   it('offers no share button before a code exists', async () => {
-    await signIn('alice');
+    await patient();
     await showScreen(GuardianScreen);
     expect(screen.queryByText('Share invite')).toBeNull();
   });
 
   it('reports a failure to create a code', async () => {
-    await signIn('alice');
+    await patient();
     db().failOn('rpc', 'generate_pairing_code', { message: 'rate limited' });
     await showScreen(GuardianScreen);
     await press('Generate pairing code');
     expect(Alert.alert).toHaveBeenCalledWith('Could not create code', 'rate limited');
   });
 
-  it('removes the guardian after confirmation', async () => {
-    const alice = await signIn('alice');
+  it('removes one guardian after confirmation, leaving the others', async () => {
+    const alice = await patient({ plan: 'g2_m1' });
     const bob = db().makeUser('bob');
+    const carol = db().makeUser('carol');
     db().link(alice.id, bob.id);
+    db().link(alice.id, carol.id);
     await showScreen(GuardianScreen);
 
-    await press('Remove guardian');
+    await press(screen.getByLabelText('Remove @bob'));
     expect(Alert.alert).toHaveBeenCalledWith(
-      'Remove guardian', 'Stop sharing with your guardian?', expect.any(Array)
+      'Remove guardian', 'Stop sharing with @bob?', expect.any(Array)
     );
     await act(async () => {
       await globalThis.pressAlertButton('Remove');
     });
     await flush();
 
-    expect(db().rows('guardian_links')[0].status).toBe('deactivated');
-    expect(screen.getByText(/No guardian linked yet/)).toBeTruthy();
+    const status = (id) => db().rows('guardian_links').find((l) => l.guardian_id === id).status;
+    expect(status(bob.id)).toBe('deactivated');
+    expect(status(carol.id)).toBe('active');
+    expect(screen.queryByText('@bob · linked')).toBeNull();
   });
 
   it('keeps the guardian when the removal is cancelled', async () => {
-    const alice = await signIn('alice');
+    const alice = await patient();
     db().link(alice.id, db().makeUser('bob').id);
     await showScreen(GuardianScreen);
 
-    await press('Remove guardian');
+    await press(screen.getByLabelText('Remove @bob'));
     await act(async () => {
       await globalThis.pressAlertButton('Cancel');
     });
@@ -213,6 +246,7 @@ describe('GuardianDashboardScreen', () => {
 
   it('links a person with a valid code and lists them', async () => {
     const alice = db().makeUser('alice', { display_name: 'Alice R' });
+    db().subscribe(alice.id);
     db().as(alice);
     const code = await generatePairingCode();
 

@@ -184,6 +184,7 @@ describe('SEC-04 — pairing gives nothing away and is rate limited', () => {
 
   it('a successful pairing is not counted as a failure', async () => {
     const patient = db().makeUser('alice');
+    db().subscribe(patient.id);
     db().as(patient);
     const { data: code } = await supabase.rpc('generate_pairing_code');
     await signedIn('bob', { isGuardian: true });

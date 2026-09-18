@@ -166,6 +166,20 @@ describe('sweepMissedDoses — when it stays silent', () => {
 });
 
 describe('sweepMissedDoses — when it alerts', () => {
+  // A plan can allow several guardians; each of them is told.
+  it('alerts every linked guardian', async () => {
+    const { alice } = await patientWithGuardian({ settings: { graceMinutes: 30 } });
+    const carol = db().makeUser('carol', { push_token: 'ExponentPushToken[carol]' });
+    db().link(alice.id, carol.id);
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    atLocal('08:31');
+    await sweepMissedDoses();
+
+    const to = globalThis.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).to);
+    expect(to).toHaveLength(2);
+    expect(to).toContain('ExponentPushToken[carol]');
+  });
+
   it('alerts once the grace period has elapsed', async () => {
     await patientWithGuardian({ settings: { graceMinutes: 30 } });
     await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });

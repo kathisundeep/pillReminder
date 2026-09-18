@@ -5,8 +5,9 @@ import {
   getMyProfile,
   updateMySettings,
   generatePairingCode,
-  getMyActiveGuardian,
-  revokeGuardian,
+  getMyGuardians,
+  getMyGuardianAllowance,
+  removeGuardian,
 } from '../utils/guardianCloud';
 import { NOTIFY_MODES, notifyModeOf } from '../utils/guardian';
 import {
@@ -28,7 +29,8 @@ const GRACE_OPTIONS = [5, 15, 30, 60];
 
 export default function GuardianScreen({ navigation }) {
   const [profile, setProfile] = useState(null);
-  const [guardian, setGuardian] = useState(null);
+  const [guardians, setGuardians] = useState([]);
+  const [allowance, setAllowance] = useState({ limit: 0, used: 0 });
   const [code, setCode] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -37,7 +39,9 @@ export default function GuardianScreen({ navigation }) {
     setLoading(true);
     const p = await getMyProfile();
     setProfile(p);
-    setGuardian(await getMyActiveGuardian());
+    const [list, allow] = await Promise.all([getMyGuardians(), getMyGuardianAllowance()]);
+    setGuardians(list);
+    setAllowance(allow);
     setLoading(false);
   }, []);
 
@@ -83,19 +87,23 @@ export default function GuardianScreen({ navigation }) {
     } catch (e) {}
   };
 
-  const onRemove = () => {
-    Alert.alert('Remove guardian', 'Stop sharing with your guardian?', [
+  const onRemove = (g) => {
+    Alert.alert('Remove guardian', `Stop sharing with @${g.username}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
         style: 'destructive',
         onPress: async () => {
-          await revokeGuardian();
+          await removeGuardian(g.guardianId);
           load();
         },
       },
     ]);
   };
+
+  // Room on the plan for another guardian?
+  const { limit, used } = allowance;
+  const canInvite = used < limit;
 
   if (loading) {
     return (
@@ -112,31 +120,29 @@ export default function GuardianScreen({ navigation }) {
       <TitleHeader title="Guardian" onClose={() => navigation.goBack()} />
       <Content>
         <Card>
-          <CardTitle>Your guardian</CardTitle>
-          {guardian ? (
-            <>
-              <View style={styles.guardianRow}>
-                <Avatar
-                  name={guardian.guardianName || guardian.guardianUsername}
-                  role="guardian"
-                  size={44}
-                />
+          <CardTitle>Your guardians</CardTitle>
+          <Text style={styles.allowance}>
+            {limit === 0
+              ? 'Your plan does not include a guardian.'
+              : `Your plan allows ${limit} guardian${limit > 1 ? 's' : ''} · ${used} linked`}
+          </Text>
+          {guardians.length ? (
+            guardians.map((g) => (
+              <View key={g.guardianId} style={styles.guardianRow}>
+                <Avatar name={g.name || g.username} role="guardian" size={40} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.guardianName}>
-                    {guardian.guardianName || guardian.guardianUsername}
-                  </Text>
-                  <Text style={styles.sub}>
-                    @{guardian.guardianUsername} · linked
-                  </Text>
+                  <Text style={styles.guardianName}>{g.name || g.username}</Text>
+                  <Text style={styles.sub}>@{g.username} · linked</Text>
                 </View>
+                <Button
+                  title="Remove"
+                  variant="neutral"
+                  onPress={() => onRemove(g)}
+                  textStyle={{ color: colors.danger }}
+                  accessibilityLabel={`Remove @${g.username}`}
+                />
               </View>
-              <Button
-                title="Remove guardian"
-                variant="neutral"
-                onPress={onRemove}
-                textStyle={{ color: colors.danger }}
-              />
-            </>
+            ))
           ) : (
             <CardSubtitle>
               A guardian signs in on their own phone and can see your medicines
@@ -145,35 +151,46 @@ export default function GuardianScreen({ navigation }) {
           )}
         </Card>
 
-        <Card>
-          <CardTitle>{guardian ? 'Change guardian' : 'Invite a guardian'}</CardTitle>
-          <CardSubtitle>
-            Your username is {profile?.username}. Generate a one-time code and
-            share it — when your new guardian uses it, any previous guardian is
-            removed.
-          </CardSubtitle>
+        {canInvite ? (
+          <Card>
+            <CardTitle>Invite a guardian</CardTitle>
+            <CardSubtitle>
+              Your username is {profile?.username}. Generate a one-time code and
+              share it with the person who will look after you.
+            </CardSubtitle>
 
-          {code ? (
-            <View style={styles.codeBox}>
-              <Text style={styles.codeText}>{String(code).split('').join(' ')}</Text>
-              <Text style={styles.codeHint}>
-                Share with your guardian (expires in 30 days)
-              </Text>
-            </View>
-          ) : null}
-
-          <View style={{ gap: 8 }}>
-            <Button
-              title={busy ? 'Working…' : code ? 'Generate a new code' : 'Generate pairing code'}
-              onPress={onGenerate}
-              disabled={busy}
-              role="guardian"
-            />
             {code ? (
-              <Button title="Share invite" variant="neutral" onPress={shareInvite} />
+              <View style={styles.codeBox}>
+                <Text style={styles.codeText}>{String(code).split('').join(' ')}</Text>
+                <Text style={styles.codeHint}>
+                  Share with your guardian (expires in 30 days)
+                </Text>
+              </View>
             ) : null}
-          </View>
-        </Card>
+
+            <View style={{ gap: 8 }}>
+              <Button
+                title={busy ? 'Working…' : code ? 'Generate a new code' : 'Generate pairing code'}
+                onPress={onGenerate}
+                disabled={busy}
+                role="guardian"
+              />
+              {code ? (
+                <Button title="Share invite" variant="neutral" onPress={shareInvite} />
+              ) : null}
+            </View>
+          </Card>
+        ) : (
+          <Card>
+            <CardTitle>{limit === 0 ? 'Guardians need a plan' : 'Your plan is full'}</CardTitle>
+            <CardSubtitle>
+              {limit === 0
+                ? 'Choose a plan with 1, 2 or 3 guardians to invite someone to look after you.'
+                : `All ${limit} guardian place${limit > 1 ? 's are' : ' is'} taken. Upgrade your plan, or remove a guardian to invite someone else.`}
+            </CardSubtitle>
+            <Button title="See plans" onPress={() => navigation.navigate('Plans')} role="guardian" />
+          </Card>
+        )}
 
         <Card>
           <CardTitle>Alerts</CardTitle>
@@ -226,6 +243,7 @@ export default function GuardianScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
+  allowance: { fontSize: 13, color: colors.muted, marginBottom: 12 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   guardianRow: {
     flexDirection: 'row',

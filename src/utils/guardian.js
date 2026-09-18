@@ -17,7 +17,7 @@ import {
   setOwnPushToken,
 } from './storage';
 import {
-  getActiveGuardianTarget,
+  getActiveGuardianTargets,
   getMyProfile,
   saveMyPushToken,
 } from './guardianCloud';
@@ -139,13 +139,16 @@ export async function notifyGuardianTaken(user, medicineName) {
     if (!user) return;
     const profile = await getMyProfile();
     if (!wantsIntakeAlerts(notifyModeOf(profile))) return;
-    const target = await getActiveGuardianTarget();
-    if (!target?.token) return;
-    await sendPush(target.token, {
-      title: 'Medicine taken',
-      body: `${user} just took ${medicineName || 'their medicine'}.`,
-      data: { type: 'guardian-taken', medicineName, who: user },
-    });
+    const targets = await getActiveGuardianTargets();
+    await Promise.all(
+      targets.map((t) =>
+        sendPush(t.token, {
+          title: 'Medicine taken',
+          body: `${user} just took ${medicineName || 'their medicine'}.`,
+          data: { type: 'guardian-taken', medicineName, who: user },
+        })
+      )
+    );
   } catch (e) {
     // best-effort
   }
@@ -192,9 +195,8 @@ export async function sweepMissedDoses() {
     // A guardian is needed to SEND an alert, not to DETECT a missed dose.
     // Detection runs either way, so a user without a guardian still gets an
     // accurate adherence history — which is what the health report is built on.
-    const target = await getActiveGuardianTarget();
-    const canPush =
-      !!target?.token && wantsMissedAlerts(notifyModeOf(profile));
+    const targets = await getActiveGuardianTargets();
+    const canPush = targets.length > 0 && wantsMissedAlerts(notifyModeOf(profile));
 
     const meds = await getMedicines(user);
     const now = new Date();
@@ -247,7 +249,7 @@ export async function sweepMissedDoses() {
         const key = `${med.id}:${slot}`;
         if (await hasAlertedGuardian(user, key)) continue;
 
-        const delivered = await sendPush(target.token, {
+        const alert = {
           title: skipped ? 'Skipped medicine alert' : 'Missed medicine alert',
           body: skipped
             ? `${user} skipped ${med.name} (due ${formatClock(
@@ -259,7 +261,10 @@ export async function sweepMissedDoses() {
           data: {
             type: 'guardian-alert', medicineName: med.name, who: user, slot,
           },
-        });
+        };
+        // Every linked guardian; counted as reached if any of them was.
+        const results = await Promise.all(targets.map((t) => sendPush(t.token, alert)));
+        const delivered = results.some(Boolean);
         // Only suppress future attempts once the guardian has actually been
         // reached. Marking on a failed send loses the alert for the whole day.
         if (delivered) await markAlertedGuardian(user, key);

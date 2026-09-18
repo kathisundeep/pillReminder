@@ -256,93 +256,88 @@ describe('HealthReportScreen', () => {
 
 // ===========================================================================
 describe('PlansScreen', () => {
-  it('shows the catalog with prices and the current plan', async () => {
-    await signedIn();
-    await showScreen(PlansScreen);
-
-    // "Free" appears as the card name and as its price.
-    expect(screen.getAllByText('Free').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText(/up to 1 guardian/)).toBeTruthy();
-    expect(screen.getByText('Plus')).toBeTruthy();
-    expect(screen.getByText('Family')).toBeTruthy();
-    expect(screen.getByText('₹99/month')).toBeTruthy();
-    expect(screen.getByText('₹199/month')).toBeTruthy();
-    // A signed-in user with no subscription is on Free, so its button is
-    // disabled and the two paid plans offer Subscribe.
-    // Once as the section label, once as the Free card's disabled button.
-    expect(screen.getAllByText('Current plan')).toHaveLength(2);
-    expect(screen.getAllByText('Subscribe')).toHaveLength(2);
+  beforeEach(() => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
   });
 
-  it('describes the guardian allowance per plan', async () => {
-    await signedIn();
-    await showScreen(PlansScreen);
-    expect(screen.getByText('• Up to 1 guardian')).toBeTruthy();
-    expect(screen.getByText('• Up to 3 guardians')).toBeTruthy();
-    expect(screen.getByText('• Up to 5 guardians')).toBeTruthy();
-  });
-
-  it('warns that payments are not live', async () => {
-    await signedIn();
-    await showScreen(PlansScreen);
-    expect(screen.getByText(/Online payment .* coming soon/)).toBeTruthy();
-    expect(screen.getByText(/cannot be activated until then/)).toBeTruthy();
-  });
-
-  // Was SEC-01: checkout is a stub that always reports failure, and the code
-  // activated the plan anyway — so anyone could take the top tier for free.
-  it('refuses to activate a paid plan while payment is unavailable', async () => {
-    const user = await signedIn();
-    await showScreen(PlansScreen);
-    await press(screen.getAllByText('Subscribe')[0]);
-
-    expect(Alert.alert).toHaveBeenCalledWith(
-      'Payment not available yet',
-      expect.stringMatching(/not enabled/i)
-    );
-    expect(db().rows('subscriptions').filter((s2) => s2.user_id === user.id)).toHaveLength(0);
-  });
-
-  it('leaves the user on Free after a refused subscribe', async () => {
-    await signedIn();
-    await showScreen(PlansScreen);
-    await press(screen.getAllByText('Subscribe')[0]);
-
-    expect(screen.getAllByText('Free').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText('Subscribe')).toHaveLength(2);
-  });
-
-  it('sends a downgrade to Free through the server', async () => {
-    const user = await signedIn();
-    db().seed('subscriptions', [
-      { user_id: user.id, plan_id: 'plus', status: 'active' },
-    ]);
-    let called = null;
-    db().onFunction('change-plan', async (body) => {
-      called = body;
-      db().rows('subscriptions')[0].status = 'canceled';
-      return { activated: 'free' };
+  // Checkout pauses briefly to look like processing; run the clock past it.
+  async function payFor(label) {
+    await press(label);
+    await press(/^Pay ₹/);
+    await act(async () => {
+      jest.advanceTimersByTime(1000);
     });
+    await flush();
+  }
 
+  it('says there is no plan, and that guardians need one', async () => {
+    await signedIn();
     await showScreen(PlansScreen);
-    await press('Switch to Free');
-
-    expect(called).toEqual({ planId: 'free' });
-    expect(Alert.alert).toHaveBeenCalledWith(
-      'Plan updated', expect.stringContaining('Free')
-    );
+    expect(screen.getByText('No plan')).toBeTruthy();
+    expect(screen.getByText(/Guardians need a plan/)).toBeTruthy();
   });
 
-  it('reports a billing service failure instead of pretending', async () => {
+  it('shows 1, 2 and 3 guardians for a month at ₹150 / ₹250 / ₹300', async () => {
     await signedIn();
-    db().seed('subscriptions', [
-      { user_id: db().session.user.id, plan_id: 'plus', status: 'active' },
-    ]);
     await showScreen(PlansScreen);
-    await press('Switch to Free');
+    expect(screen.getByText('1 guardian')).toBeTruthy();
+    expect(screen.getByText('2 guardians')).toBeTruthy();
+    expect(screen.getByText('3 guardians')).toBeTruthy();
+    for (const price of ['₹150', '₹250', '₹300']) expect(screen.getByText(price)).toBeTruthy();
+  });
 
-    expect(Alert.alert).toHaveBeenCalledWith(
-      'Could not change plan', expect.stringMatching(/Function not found/)
-    );
+  it('switches to longer plans with their saving', async () => {
+    await signedIn();
+    await showScreen(PlansScreen);
+    await press('3 months');
+    expect(screen.getByText('₹425')).toBeTruthy();
+    expect(screen.getByText('3 months · ₹142/month')).toBeTruthy();
+    expect(screen.getAllByText(/^Save \d+%$/)).toHaveLength(3);
+  });
+
+  it('says plainly that checkout is a test', async () => {
+    await signedIn();
+    await showScreen(PlansScreen);
+    expect(screen.getByText(/Test mode — checkout is simulated and no money is charged/)).toBeTruthy();
+  });
+
+  it('checks out and activates the plan', async () => {
+    const user = await signedIn();
+    await showScreen(PlansScreen);
+
+    await press(screen.getAllByText('Choose')[1]); // 2 guardians · 1 month
+    expect(screen.getByText('Checkout')).toBeTruthy();
+    expect(screen.getByText('UPI')).toBeTruthy();
+    await press('Debit / credit card');
+    await press('Pay ₹250');
+    await act(async () => {
+      jest.advanceTimersByTime(1000);
+    });
+    await flush();
+
+    expect(screen.getByText('Payment successful')).toBeTruthy();
+    const active = db().rows('subscriptions').filter((x) => x.user_id === user.id && x.status === 'active');
+    expect(active.map((x) => x.plan_id)).toEqual(['g2_m1']);
+  });
+
+  it('shows the plan it is on, with its end date, after paying', async () => {
+    await signedIn();
+    await showScreen(PlansScreen);
+    await payFor(screen.getAllByText('Choose')[0]);
+    await press('Done');
+
+    expect(screen.getByText('1 guardian · 1 month')).toBeTruthy();
+    expect(screen.getByText(/Up to 1 guardian · active until/)).toBeTruthy();
+    expect(screen.getByText('Current plan')).toBeTruthy();
+  });
+
+  it('reports a failed checkout and activates nothing', async () => {
+    const user = await signedIn();
+    db().mockPayments = false;
+    await showScreen(PlansScreen);
+    await payFor(screen.getAllByText('Choose')[0]);
+
+    expect(Alert.alert).toHaveBeenCalledWith('Payment failed', 'Test payments are switched off.');
+    expect(db().rows('subscriptions').filter((x) => x.user_id === user.id)).toHaveLength(0);
   });
 });

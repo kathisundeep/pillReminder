@@ -87,25 +87,88 @@ export async function saveMyPushToken(token) {
   await supabase.from('profiles').update({ push_token: token }).eq('id', u.user.id);
 }
 
-// User's device reads its active guardian's push token (RLS lets the user read
-// the linked guardian's profile). Returns { token, settings } or null.
-export async function getActiveGuardianTarget() {
-  const { data: u } = await localUser();
-  if (!u?.user) return null;
-  const { data: link } = await supabase
-    .from('guardian_links')
-    .select('guardian_id')
-    .eq('user_id', u.user.id) // never match a link where WE are the guardian
-    .eq('status', 'active')
-    .limit(1)
-    .maybeSingle();
-  if (!link) return null;
-  const { data: gprof } = await supabase
+// User's device reads its guardians' push tokens (RLS lets the user read a
+// linked guardian's profile). A plan can allow several guardians, and every
+// one of them is alerted. Guardians without a token (not signed in anywhere,
+// or signed out by another phone) are skipped.
+export async function getActiveGuardianTargets() {
+  const guardians = await getMyGuardians();
+  if (!guardians.length) return [];
+  const { data } = await supabase
     .from('profiles')
-    .select('push_token, username')
-    .eq('id', link.guardian_id)
-    .maybeSingle();
-  return gprof?.push_token ? { token: gprof.push_token, username: gprof.username } : null;
+    .select('id, push_token, username')
+    .in('id', guardians.map((g) => g.guardianId));
+  return (data || [])
+    .filter((p) => p.push_token)
+    .map((p) => ({ token: p.push_token, username: p.username }));
+}
+
+// The first of them, for callers that only need to know one exists.
+export async function getActiveGuardianTarget() {
+  return (await getActiveGuardianTargets())[0] || null;
+}
+
+// User: every guardian currently linked to them.
+export async function getMyGuardians() {
+  const { data: u } = await localUser();
+  if (!u?.user) return [];
+  const { data: links } = await supabase
+    .from('guardian_links')
+    .select('guardian_id, created_at')
+    .eq('user_id', u.user.id) // never match a link where WE are the guardian
+    .eq('status', 'active');
+  if (!links?.length) return [];
+  const { data: profs } = await supabase
+    .from('profiles')
+    .select('id, username, display_name')
+    .in('id', links.map((l) => l.guardian_id));
+  return links.map((l) => {
+    const p = (profs || []).find((x) => x.id === l.guardian_id);
+    return { guardianId: l.guardian_id, username: p?.username, name: p?.display_name };
+  });
+}
+
+// User: remove one guardian, leaving any others linked.
+export async function removeGuardian(guardianId) {
+  const { error } = await supabase.rpc('remove_guardian', { guardian: guardianId });
+  if (error) throw error;
+}
+
+// User: how many guardians their plan allows, and how many are linked.
+export async function getMyGuardianAllowance() {
+  const { data: u } = await localUser();
+  if (!u?.user) return { limit: 0, used: 0 };
+  const [{ data: limit }, guardians] = await Promise.all([
+    supabase.rpc('guardian_limit', { target_user: u.user.id }),
+    getMyGuardians(),
+  ]);
+  return { limit: Number(limit) || 0, used: guardians.length };
+}
+
+// ---- One phone per guardian account (guardian_session.sql) ----
+
+// At sign-in: this phone takes the guardian account over. Other phones stop
+// seeing data and alerts at once, and their logins cannot be renewed.
+export async function claimGuardianSession() {
+  const { error } = await supabase.rpc('claim_guardian_session');
+  if (error) return false;
+  try {
+    await supabase.auth.signOut({ scope: 'others' });
+  } catch (e) {}
+  return true;
+}
+
+// 'ok', or 'replaced' when another phone has signed in to this guardian
+// account since. Anything unexpected (offline, older server) reads as 'ok' —
+// the server still refuses a replaced phone's data either way.
+export async function checkGuardianSession() {
+  try {
+    const { data, error } = await supabase.rpc('guardian_session_check');
+    if (error) return 'ok';
+    return data === 'replaced' ? 'replaced' : 'ok';
+  } catch (e) {
+    return 'ok';
+  }
 }
 
 // ---- Guardian reading a linked user's data ----

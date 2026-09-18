@@ -21,11 +21,37 @@ jest.mock('@supabase/supabase-js', () => {
     db.functionHandlers = {};
     db.rlsEnabled = true;
     // The plan catalog is seeded by schema.sql / subscriptions.sql in prod.
+    // plans_v2.sql: Free allows no guardian; the old tiers are retired.
     db.tables.plans.push(
-      { id: 'free', name: 'Free', price_cents: 0, currency: 'INR', interval: 'month', max_guardians: 1, features: {} },
-      { id: 'plus', name: 'Plus', price_cents: 9900, currency: 'INR', interval: 'month', max_guardians: 3, features: { trackers: true, historyYears: 2 } },
-      { id: 'family', name: 'Family', price_cents: 19900, currency: 'INR', interval: 'month', max_guardians: 5, features: { trackers: true, historyYears: 2 } }
+      { id: 'free', name: 'Free', price_cents: 0, currency: 'INR', interval: 'month', max_guardians: 0, months: 0, active: true, features: {} },
+      { id: 'plus', name: 'Plus', price_cents: 9900, currency: 'INR', interval: 'month', max_guardians: 3, months: 1, active: false, features: { trackers: true, historyYears: 2 } },
+      { id: 'family', name: 'Family', price_cents: 19900, currency: 'INR', interval: 'month', max_guardians: 5, months: 1, active: false, features: { trackers: true, historyYears: 2 } },
+      { id: 'g1_m1', name: '1 guardian · 1 month', price_cents: 15000, currency: 'INR', interval: 'month', max_guardians: 1, months: 1, active: true, features: {} },
+      { id: 'g2_m1', name: '2 guardians · 1 month', price_cents: 25000, currency: 'INR', interval: 'month', max_guardians: 2, months: 1, active: true, features: {} },
+      { id: 'g3_m1', name: '3 guardians · 1 month', price_cents: 30000, currency: 'INR', interval: 'month', max_guardians: 3, months: 1, active: true, features: {} },
+      { id: 'g1_m3', name: '1 guardian · 3 months', price_cents: 42500, currency: 'INR', interval: 'month', max_guardians: 1, months: 3, active: true, features: {} },
+      { id: 'g2_m3', name: '2 guardians · 3 months', price_cents: 71000, currency: 'INR', interval: 'month', max_guardians: 2, months: 3, active: true, features: {} },
+      { id: 'g3_m3', name: '3 guardians · 3 months', price_cents: 85500, currency: 'INR', interval: 'month', max_guardians: 3, months: 3, active: true, features: {} },
+      { id: 'g1_m6', name: '1 guardian · 6 months', price_cents: 81000, currency: 'INR', interval: 'month', max_guardians: 1, months: 6, active: true, features: {} },
+      { id: 'g2_m6', name: '2 guardians · 6 months', price_cents: 135000, currency: 'INR', interval: 'month', max_guardians: 2, months: 6, active: true, features: {} },
+      { id: 'g3_m6', name: '3 guardians · 6 months', price_cents: 162000, currency: 'INR', interval: 'month', max_guardians: 3, months: 6, active: true, features: {} },
+      { id: 'g1_m12', name: '1 guardian · 12 months', price_cents: 153000, currency: 'INR', interval: 'month', max_guardians: 1, months: 12, active: true, features: {} },
+      { id: 'g2_m12', name: '2 guardians · 12 months', price_cents: 255000, currency: 'INR', interval: 'month', max_guardians: 2, months: 12, active: true, features: {} },
+      { id: 'g3_m12', name: '3 guardians · 12 months', price_cents: 306000, currency: 'INR', interval: 'month', max_guardians: 3, months: 12, active: true, features: {} },
     );
+    db.mockPayments = true;
+  };
+
+  // Give a user an active plan (as a completed checkout would).
+  db.subscribe = (userId, planId = 'g1_m1') => {
+    const plan = db.tables.plans.find((p) => p.id === planId);
+    const ends = new Date();
+    ends.setMonth(ends.getMonth() + (plan?.months || 1));
+    db.tables.subscriptions.push({
+      id: `sub-${db.tables.subscriptions.length + 1}`, user_id: userId, plan_id: planId,
+      status: 'active', provider: 'test', auto_renew: false,
+      current_period_end: ends.toISOString(),
+    });
   };
 
   globalThis.__db = db;
