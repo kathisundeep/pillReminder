@@ -30,9 +30,13 @@ beforeEach(() => {
   jest.setSystemTime(new Date(2025, 5, 10, 12, 0, 0, 0)); // Tue 10 Jun, 12:00 IST
 });
 
+// Names the open card, or — if it already has a name — adds another card
+// (which inherits the previous card's schedule) and names that.
 const addName = async (name) => {
+  if (screen.getByPlaceholderText('e.g. Paracetamol 500mg').props.value) {
+    await press('+ Add another medicine');
+  }
   await typeInto('e.g. Paracetamol 500mg', name);
-  await press('+ Add');
 };
 
 describe('AddMedicineScreen — create mode', () => {
@@ -45,46 +49,91 @@ describe('AddMedicineScreen — create mode', () => {
     expect(navigation.setOptions).toHaveBeenCalledWith({ title: 'Add medicine' });
   });
 
-  it('offers a multi-name form with the batching hint', async () => {
+  it('offers one card per medicine, with the grouping hint', async () => {
     await showScreen(AddMedicineScreen);
-    expect(screen.getByText('Medicine names')).toBeTruthy();
-    expect(screen.getByText(/Each is saved as its own item but shares this schedule/)).toBeTruthy();
+    expect(screen.getByText('Medicines')).toBeTruthy();
+    expect(screen.getByText(/Each medicine keeps its own times/)).toBeTruthy();
+    expect(screen.getByText('+ Add another medicine')).toBeTruthy();
   });
 
-  it('adds and removes name chips', async () => {
+  it('folds the previous card to a summary when another is added', async () => {
+    await showScreen(AddMedicineScreen);
+    await press('Twice');
+    await addName('Aspirin');
+    await addName('Metformin');
+
+    expect(screen.getByLabelText('Edit Aspirin')).toBeTruthy();
+    expect(screen.getByText('Tablet · 9:00 AM, 9:00 PM · Daily · Ongoing')).toBeTruthy();
+    expect(screen.getByDisplayValue('Metformin')).toBeTruthy();
+  });
+
+  it('reopens a folded card on tap', async () => {
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
     await addName('Metformin');
 
-    expect(screen.getByText('Aspirin  ×')).toBeTruthy();
-    expect(screen.getByText('Metformin  ×')).toBeTruthy();
+    await press(screen.getByLabelText('Edit Aspirin'));
 
-    await press('Aspirin  ×');
-    expect(screen.queryByText('Aspirin  ×')).toBeNull();
-    expect(screen.getByText('Metformin  ×')).toBeTruthy();
+    expect(screen.getByDisplayValue('Aspirin')).toBeTruthy();
+    expect(screen.getByLabelText('Edit Metformin')).toBeTruthy();
   });
 
-  it('ignores an empty or duplicate name', async () => {
+  it('removes a card', async () => {
     await showScreen(AddMedicineScreen);
-    await addName('   ');
+    await press('Once');
     await addName('Aspirin');
+    await addName('Metformin');
+
+    await press(screen.getByLabelText('Remove Aspirin'));
+    await press('Save');
+
+    expect(meds().map((m) => m.name)).toEqual(['Metformin']);
+  });
+
+  it('ignores a blank card left at the end of a batch', async () => {
+    await showScreen(AddMedicineScreen);
+    await press('Once');
     await addName('Aspirin');
-    expect(screen.getAllByText('Aspirin  ×')).toHaveLength(1);
+    await press('+ Add another medicine');
+    await press('Save');
+    expect(meds().map((m) => m.name)).toEqual(['Aspirin']);
+  });
+
+  it('rejects the same medicine twice', async () => {
+    await showScreen(AddMedicineScreen);
+    await press('Once');
+    await addName('Aspirin');
+    await addName('aspirin');
+    await press('Save all 2');
+    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'aspirin is listed twice.');
+    expect(meds()).toHaveLength(0);
   });
 
   it('requires at least one name', async () => {
     await showScreen(AddMedicineScreen);
     await press('Once');
     await press('Save');
-    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Add at least one medicine name.');
+    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Enter medicine name.');
     expect(meds()).toHaveLength(0);
   });
 
-  it('requires at least one time', async () => {
+  it('requires at least one time, naming the medicine', async () => {
     await showScreen(AddMedicineScreen);
     await addName('Aspirin');
     await press('Save');
-    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Add at least one time.');
+    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Add at least one time for Aspirin.');
+    expect(meds()).toHaveLength(0);
+  });
+
+  it('opens the card that needs attention', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin'); // no times
+    await addName('Metformin');
+    await press('Once');
+    await press('Save all 2');
+
+    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Add at least one time for Aspirin.');
+    expect(screen.getByDisplayValue('Aspirin')).toBeTruthy();
     expect(meds()).toHaveLength(0);
   });
 
@@ -94,30 +143,59 @@ describe('AddMedicineScreen — create mode', () => {
     await press('Once');
     await press('Specific days');
     await press('Save');
-    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Pick at least one day.');
+    expect(Alert.alert).toHaveBeenCalledWith('Missing', 'Pick at least one day for Aspirin.');
     expect(meds()).toHaveLength(0);
-  });
-
-  it('saves a medicine still sitting in the text box, unadded', async () => {
-    await showScreen(AddMedicineScreen);
-    await typeInto('e.g. Paracetamol 500mg', 'Unadded');
-    await press('Once');
-    await press('Save');
-
-    expect(meds()).toHaveLength(1);
-    expect(meds()[0].name).toBe('Unadded');
   });
 
   it('saves several medicines that share one schedule', async () => {
     const { navigation } = await showScreen(AddMedicineScreen);
+    await press('Twice');
     await addName('Aspirin');
     await addName('Metformin');
-    await press('Twice');
-    await press('Save');
+    await press('Save all 2');
 
     expect(meds().map((m) => m.name).sort()).toEqual(['Aspirin', 'Metformin']);
     for (const m of meds()) expect(m.times).toEqual(['09:00', '21:00']);
     expect(navigation.goBack).toHaveBeenCalled();
+  });
+
+  // The reported need: A twice a day, B once, C only in the evening — in one
+  // go, then grouped by time for the reminders.
+  it('saves each medicine with its own schedule, grouped into shared alarms', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('A');
+    await press('Twice'); // 9 AM, 9 PM
+    await addName('B');
+    await press('Once'); // 9 AM
+    await addName('C');
+    await press('Twice');
+    await press('9:00 AM  ×'); // 9 PM only
+    await press('Save all 3');
+
+    const times = Object.fromEntries(meds().map((m) => [m.name, m.times]));
+    expect(times).toEqual({ A: ['09:00', '21:00'], B: ['09:00'], C: ['21:00'] });
+
+    const byHour = Object.fromEntries(
+      scheduled().map((n) => [n.trigger.hour, n.content.data.medicineNames])
+    );
+    expect(scheduled()).toHaveLength(2);
+    expect(byHour[9]).toEqual(['A', 'B']);
+    expect(byHour[21]).toEqual(['A', 'C']);
+  });
+
+  it('starts another medicine with the previous schedule, but not its name or photo', async () => {
+    await showScreen(AddMedicineScreen);
+    await addName('Aspirin');
+    await press('3 times');
+    await press('10 days');
+    await press('📷  Take a photo');
+    await press('+ Add another medicine');
+
+    expect(screen.getByPlaceholderText('e.g. Paracetamol 500mg').props.value).toBe('');
+    expect(screen.getByText('8:00 AM  ×')).toBeTruthy();
+    expect(screen.getByText('2:00 PM  ×')).toBeTruthy();
+    expect(screen.getByText(/10 days, ending/)).toBeTruthy();
+    expect(screen.getByText(/No\s*photo/)).toBeTruthy();
   });
 
   it('applies the defaults a bare save should produce', async () => {
@@ -140,63 +218,28 @@ describe('AddMedicineScreen — create mode', () => {
 
   it('records the chosen medicine type', async () => {
     await showScreen(AddMedicineScreen);
-    // The form is captured when the name is added, so it is chosen first.
-    await press(/Syrup/);
     await addName('Cough syrup');
+    await press('Syrup');
     await press('Once');
     await press('Save');
     expect(meds()[0].form).toBe('Syrup');
   });
 
-  it('applies the type to a name still sitting in the input', async () => {
-    // The common single-medicine path: type a name, pick a type, save —
-    // without ever pressing Add.
-    await showScreen(AddMedicineScreen);
-    await typeInto('e.g. Paracetamol 500mg', 'Amoxil');
-    await press(/Capsule/);
-    await press('Once');
-    await press('Save');
-    expect(meds()[0]).toMatchObject({ name: 'Amoxil', form: 'Capsule' });
-  });
-
-  // The reported bug: adding a tablet, a capsule and a syrup to one schedule
+  // Was a reported bug: adding a tablet, a capsule and a syrup to one schedule
   // saved three of whichever type happened to be selected last.
   it('keeps a different type for each medicine in one batch', async () => {
     await showScreen(AddMedicineScreen);
-
-    await press(/Tablet/);
-    await addName('Aspirin');
-    await press(/Capsule/);
-    await addName('Amoxil');
-    await press(/Syrup/);
-    await addName('Benadryl');
-
     await press('Once');
-    await press('Save');
+    await addName('Aspirin');
+    await press('Tablet');
+    await addName('Amoxil');
+    await press('Capsule');
+    await addName('Benadryl');
+    await press('Syrup');
+    await press('Save all 3');
 
     const saved = Object.fromEntries(meds().map((m) => [m.name, m.form]));
-    expect(saved).toEqual({
-      Aspirin: 'Tablet',
-      Amoxil: 'Capsule',
-      Benadryl: 'Syrup',
-    });
-  });
-
-  it('keeps a different colour for each medicine in one batch', async () => {
-    await showScreen(AddMedicineScreen);
-    const swatches = screen.getAllByLabelText(/Tablet$/);
-    await press(swatches[1]);
-    await addName('Aspirin');
-    const later = screen.getAllByLabelText(/Tablet$/);
-    await press(later[3]);
-    await addName('Ibuprofen');
-    await press('Once');
-    await press('Save');
-
-    const [a, b] = ['Aspirin', 'Ibuprofen'].map(
-      (n) => meds().find((m) => m.name === n).color
-    );
-    expect(a).not.toBe(b);
+    expect(saved).toEqual({ Aspirin: 'Tablet', Amoxil: 'Capsule', Benadryl: 'Syrup' });
   });
 
   it('previews the colour swatches using the selected form`s icon', async () => {
@@ -204,7 +247,7 @@ describe('AddMedicineScreen — create mode', () => {
     // Default form is Tablet: five swatches, all showing the tablet glyph.
     expect(screen.getAllByLabelText(/Tablet$/)).toHaveLength(5);
 
-    await press(/Syrup/);
+    await press('Syrup');
     expect(screen.getAllByLabelText(/Syrup$/)).toHaveLength(5);
     expect(screen.queryAllByLabelText(/ Tablet$/)).toHaveLength(0);
   });
@@ -240,12 +283,12 @@ describe('AddMedicineScreen — create mode', () => {
 
   it('lets each batched medicine keep its own colour', async () => {
     await showScreen(AddMedicineScreen);
-    await press('Red');
-    await addName('RedPill');
-    await press('Blue');
-    await addName('BluePill');
     await press('Once');
-    await press('Save');
+    await addName('RedPill');
+    await press('Red');
+    await addName('BluePill');
+    await press('Blue');
+    await press('Save all 2');
 
     const byName = Object.fromEntries(meds().map((m) => [m.name, m.color]));
     expect(byName.RedPill).toBe('#f87171');
@@ -436,20 +479,21 @@ describe('AddMedicineScreen — photo', () => {
   });
 
   it('attaches the photo to the medicine it was taken for, not the next one', async () => {
+    await press('Once');
     await press('📷  Take a photo');
     await addName('WithPhoto');
-    await addName('NoPhoto'); // photo intentionally cleared after each add
-    await press('Once');
-    await press('Save');
+    await addName('NoPhoto'); // a new card starts without a photo
+    await press('Save all 2');
 
     const byName = Object.fromEntries(meds().map((m) => [m.name, m.photo]));
     expect(byName.WithPhoto).toBeTruthy();
     expect(byName.NoPhoto).toBeNull();
   });
 
-  it('shows a thumbnail on the name chip of a medicine that has a photo', async () => {
+  it('shows a thumbnail on the folded card of a medicine that has a photo', async () => {
     await press('📷  Take a photo');
     await addName('WithPhoto');
+    await addName('Other');
     const images = screen.UNSAFE_getAllByType(Image);
     expect(images.length).toBeGreaterThan(0);
   });
@@ -458,7 +502,7 @@ describe('AddMedicineScreen — photo', () => {
     ImagePicker.launchCameraAsync.mockRejectedValueOnce(new Error('camera busy'));
     await press('📷  Take a photo');
     expect(Alert.alert).toHaveBeenCalledWith('Photo failed', 'camera busy');
-    expect(screen.getByText('Medicine names')).toBeTruthy();
+    expect(screen.getByText('Medicines')).toBeTruthy();
   });
 });
 
@@ -469,10 +513,10 @@ describe('AddMedicineScreen — alarms on save', () => {
 
   it('arms one alarm per time, shared by every medicine due then', async () => {
     await showScreen(AddMedicineScreen);
+    await press('Twice');
     await addName('Aspirin');
     await addName('Metformin');
-    await press('Twice');
-    await press('Save');
+    await press('Save all 2');
 
     expect(scheduled()).toHaveLength(2);
     expect(scheduled().map((n) => n.trigger.hour).sort((a, b) => a - b)).toEqual([9, 21]);
@@ -562,10 +606,10 @@ describe('AddMedicineScreen — edit mode', () => {
     expect(screen.getByText('Delete medicine')).toBeTruthy();
   });
 
-  it('uses a single-name field, not the batch adder', async () => {
+  it('edits the one medicine, without the batch adder', async () => {
     await showScreen(AddMedicineScreen, { params: { medicineId } });
     expect(screen.getByText('Medicine name')).toBeTruthy();
-    expect(screen.queryByText('+ Add')).toBeNull();
+    expect(screen.queryByText('+ Add another medicine')).toBeNull();
   });
 
   it('saves an edited name without creating a duplicate', async () => {
@@ -685,9 +729,9 @@ describe('AddMedicineScreen — guardian request mode', () => {
 
   it('files one request per batched medicine', async () => {
     await open();
+    await press('Once');
     await addName('Vitamin D');
     await addName('Zinc');
-    await press('Once');
     await press('Send request');
     expect(db().rows('action_requests')).toHaveLength(2);
   });

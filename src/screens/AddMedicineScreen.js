@@ -2,13 +2,11 @@ import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
   Alert,
   Switch,
-  Image,
 } from 'react-native';
 import {
   addMedicine,
@@ -18,36 +16,18 @@ import {
   updateMedicine,
   deleteMedicine,
 } from '../utils/storage';
-import {
-  resyncAlarms,
-  ensureNotificationSetup,
-  TONES,
-} from '../utils/notifications';
+import { resyncAlarms, ensureNotificationSetup } from '../utils/notifications';
 import { Audio } from 'expo-av';
-import WheelTimePicker from '../components/WheelTimePicker';
-import DaysSelector from '../components/DaysSelector';
-import MedIcon from '../components/MedIcon';
+import MedicineDraftCard from '../components/MedicineDraftCard';
 import { createAddMedicineRequest } from '../utils/guardianCloud';
 import { notifyPatientOfRequest } from '../utils/guardian';
-import {
-  takeMedicinePhoto,
-  pickMedicinePhoto,
-  photoUri,
-  photoSizeLabel,
-} from '../utils/photo';
-import { formatTime } from '../utils/doseState';
 import {
   listSoundOptions,
   canUseDeviceSounds,
   rememberDeviceSound,
 } from '../utils/sounds';
-import {
-  MED_FORMS,
-  MED_COLORS,
-  formFor,
-  tintFor,
-  colors as theme,
-} from '../theme';
+import { todayISO, addDaysISO, durationOf } from '../utils/course';
+import { colors as theme } from '../theme';
 
 const TONE_SOURCES = {
   alarm: require('../../assets/sounds/alarm.wav'),
@@ -59,46 +39,24 @@ const TONE_SOURCES = {
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
 
-const FORM_OPTIONS = MED_FORMS;
+let draftSeq = 0;
 
-
-
-// "Twice a day" is how a prescription is written and how people think, so it
-// is offered as a starting point that fills in sensible times. They stay fully
-// editable afterwards — this sets the times, it does not lock them.
-const DOSES_PER_DAY = [
-  { n: 1, label: 'Once', times: ['09:00'] },
-  { n: 2, label: 'Twice', times: ['09:00', '21:00'] },
-  { n: 3, label: '3 times', times: ['08:00', '14:00', '20:00'] },
-  { n: 4, label: '4 times', times: ['08:00', '12:00', '16:00', '20:00'] },
-];
-
-// A course length, as a doctor states it. `days` null means ongoing.
-const DURATIONS = [
-  { days: null, label: 'Ongoing' },
-  { days: 3, label: '3 days' },
-  { days: 5, label: '5 days' },
-  { days: 7, label: '1 week' },
-  { days: 10, label: '10 days' },
-  { days: 15, label: '15 days' },
-  { days: 30, label: '1 month' },
-];
-
-function todayISO() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function addDaysISO(iso, days) {
-  const d = new Date(`${iso}T00:00:00`);
-  d.setDate(d.getDate() + days);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function pad(n) {
-  return String(n).padStart(2, '0');
+// A blank medicine. `schedule` carries the previous card's times, days and
+// course length, so medicines that share a schedule stay one tap each.
+function newDraft(schedule = {}) {
+  draftSeq += 1;
+  return {
+    key: `draft-${draftSeq}`,
+    name: '',
+    form: 'Tablet',
+    color: '#FFFFFF',
+    photo: null,
+    times: schedule.times || [],
+    frequency: schedule.frequency || 'daily',
+    daysOfWeek: schedule.daysOfWeek || [],
+    durationDays: schedule.durationDays ?? null,
+    startDate: null,
+  };
 }
 
 export default function AddMedicineScreen({ route, navigation }) {
@@ -110,34 +68,19 @@ export default function AddMedicineScreen({ route, navigation }) {
   const requestUsername = route.params?.requestUsername || null;
   const isRequest = !!requestUserId;
 
-  const [name, setName] = useState('');
-  const [names, setNames] = useState([]);
-  const [nameInput, setNameInput] = useState('');
-  const [times, setTimes] = useState([]);
+  // One card per medicine, each with its own schedule; only one is open.
+  const [drafts, setDrafts] = useState(() => [newDraft()]);
+  const [openKey, setOpenKey] = useState(() => null);
+  // Shared by the whole batch.
   const [snoozeMinutes, setSnoozeMinutes] = useState(10);
-  const [frequency, setFrequency] = useState('daily');
-  const [durationDays, setDurationDays] = useState(null); // null = ongoing
-  const [startDate, setStartDate] = useState(null);
-  const [daysOfWeek, setDaysOfWeek] = useState([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerInitial, setPickerInitial] = useState({ hour: 8, minute: 0 });
-  const [busy, setBusy] = useState(false);
-  const [originalNotifIds, setOriginalNotifIds] = useState([]);
-  const [form, setForm] = useState('Tablet');
   const [toneId, setToneId] = useState('classic');
+  const [alertGuardian, setAlertGuardian] = useState(true);
   const [soundOptions] = useState(() => listSoundOptions());
   const [deviceSoundsAvailable] = useState(() => canUseDeviceSounds());
   const previewRef = React.useRef(null);
-  const [alertGuardian, setAlertGuardian] = useState(true);
-  const [color, setColor] = useState('#FFFFFF');
-  const [photo, setPhoto] = useState(null);       // base64 JPEG or null
-  const [photoBusy, setPhotoBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  const openPicker = () => {
-    const now = new Date();
-    setPickerInitial({ hour: now.getHours(), minute: now.getMinutes() });
-    setPickerOpen(true);
-  };
+  const activeKey = openKey || drafts[0]?.key;
 
   useEffect(() => {
     navigation.setOptions({
@@ -152,37 +95,43 @@ export default function AddMedicineScreen({ route, navigation }) {
       const user = await getSession();
       const med = await getMedicine(user, editingId);
       if (!med) return;
-      setName(med.name);
-      setTimes(med.times || []);
+      const draft = {
+        ...newDraft(),
+        name: med.name,
+        form: med.form || 'Tablet',
+        color: med.color || '#FFFFFF',
+        photo: med.photo || null,
+        times: med.times || [],
+        frequency: med.frequency || 'daily',
+        daysOfWeek: med.daysOfWeek || [],
+        startDate: med.startDate || null,
+        // Shown back as a length rather than a raw date: that is how it was
+        // entered, and how the prescription reads.
+        durationDays: durationOf(med.startDate, med.endDate),
+      };
+      setDrafts([draft]);
+      setOpenKey(draft.key);
       setSnoozeMinutes(med.snoozeMinutes || 10);
-      setFrequency(med.frequency || 'daily');
-      setStartDate(med.startDate || null);
-      // Shown back as a length rather than a raw date: that is how it was
-      // entered, and how the prescription reads.
-      if (med.startDate && med.endDate) {
-        const from = new Date(`${med.startDate}T00:00:00`);
-        const to = new Date(`${med.endDate}T00:00:00`);
-        setDurationDays(Math.round((to - from) / 86400000) + 1);
-      } else {
-        setDurationDays(null);
-      }
-      setDaysOfWeek(med.daysOfWeek || []);
-      setOriginalNotifIds(med.notificationIds || []);
       setToneId(med.toneId || 'classic');
-      setForm(med.form || 'Tablet');
       setAlertGuardian(med.alertGuardian !== false);
-      setColor(med.color || '#FFFFFF');
-      setPhoto(med.photo || null);
     })();
   }, [editingId]);
 
-  const onPickerConfirm = ({ hour, minute }) => {
-    const hhmm = `${pad(hour)}:${pad(minute)}`;
-    if (!times.includes(hhmm)) setTimes([...times, hhmm].sort());
-    setPickerOpen(false);
+  const updateDraft = (key, patch) =>
+    setDrafts((list) => list.map((d) => (d.key === key ? { ...d, ...patch } : d)));
+
+  const addAnother = () => {
+    const last = drafts[drafts.length - 1];
+    const next = newDraft(last);
+    setDrafts([...drafts, next]);
+    setOpenKey(next.key);
   };
 
-  const removeTime = (t) => setTimes(times.filter((x) => x !== t));
+  const removeDraft = (key) => {
+    const rest = drafts.filter((d) => d.key !== key);
+    setDrafts(rest);
+    if (activeKey === key) setOpenKey(rest[rest.length - 1]?.key || null);
+  };
 
   const previewTone = async (tone) => {
     setToneId(tone.id);
@@ -228,104 +177,72 @@ export default function AddMedicineScreen({ route, navigation }) {
     };
   }, []);
 
-  const addName = () => {
-    const n = nameInput.trim();
-    if (!n) return;
-    if (!names.some((x) => x.name === n))
-      setNames([
-        ...names,
-        // The form is captured PER medicine. It used to be read from state at
-        // save time, so adding a tablet, a capsule and a syrup to one schedule
-        // saved three of whatever was selected last.
-        { name: n, form: form || 'Tablet', color: color || '#FFFFFF', photo },
-      ]);
-    setNameInput('');
-    // A photo belongs to one specific medicine, so don't carry it over to the
-    // next one added to this schedule (the colour intentionally does carry).
-    setPhoto(null);
-  };
-  const removeName = (n) => setNames(names.filter((x) => x.name !== n));
-
-  // Capture/pick, then compress down to ~9 KB before it ever touches state.
-  const grabPhoto = async (source) => {
-    setPhotoBusy(true);
-    try {
-      const res =
-        source === 'camera'
-          ? await takeMedicinePhoto()
-          : await pickMedicinePhoto();
-      if (res.ok && res.photo) setPhoto(res.photo);
-      else if (res.error) Alert.alert('Photo unavailable', res.error);
-    } catch (e) {
-      Alert.alert('Photo failed', String(e?.message || e));
-    } finally {
-      setPhotoBusy(false);
+  // Stops at the first card that is not ready, opens it, and says what is
+  // missing — by name, since there may be several.
+  const validate = () => {
+    // A card left blank at the end of a batch is ignored, not an error.
+    const named = drafts.filter((d) => d.name.trim());
+    if (named.length === 0) {
+      setOpenKey(drafts[0]?.key || null);
+      Alert.alert('Missing', 'Enter medicine name.');
+      return null;
     }
+    const seen = new Set();
+    for (const d of named) {
+      const n = d.name.trim();
+      const fail = (msg) => {
+        setOpenKey(d.key);
+        Alert.alert('Missing', msg);
+        return null;
+      };
+      if (seen.has(n.toLowerCase())) return fail(`${n} is listed twice.`);
+      seen.add(n.toLowerCase());
+      if (d.times.length === 0) return fail(`Add at least one time for ${n}.`);
+      if (d.frequency === 'weekly' && d.daysOfWeek.length === 0)
+        return fail(`Pick at least one day for ${n}.`);
+    }
+    return named;
+  };
+
+  // The stored medicine, from one card plus the batch's shared settings.
+  // Course dates are resolved HERE, once, rather than stored as a length. A
+  // length has to be re-resolved against a start every time it is read, and
+  // any disagreement about which day is day 1 silently moves the end.
+  const buildMedicine = (d, id) => {
+    const courseStart = d.startDate || todayISO();
+    return {
+      id,
+      name: d.name.trim(),
+      form: d.form || 'Tablet',
+      times: d.times,
+      snoozeMinutes,
+      frequency: d.frequency,
+      daysOfWeek: d.frequency === 'weekly' ? d.daysOfWeek : [0, 1, 2, 3, 4, 5, 6],
+      toneId: toneId || 'classic',
+      alertGuardian,
+      color: d.color || '#FFFFFF',
+      photo: d.photo || null,
+      startDate: courseStart,
+      endDate: d.durationDays == null ? null : addDaysISO(courseStart, d.durationDays - 1),
+    };
   };
 
   const save = async () => {
-    // Collect medicine name(s) with their colour. Edit mode is a single
-    // medicine; create mode can batch several that share this schedule.
-    let entries; // [{ name, color, photo }]
-    if (isEdit) {
-      if (!name.trim()) return Alert.alert('Missing', 'Enter medicine name.');
-      entries = [{ name: name.trim(), form: form || 'Tablet', color: color || '#FFFFFF', photo }];
-    } else {
-      const pending = nameInput.trim();
-      entries = [...names];
-      if (pending && !entries.some((e) => e.name === pending))
-        entries.push({ name: pending, form: form || 'Tablet', color: color || '#FFFFFF', photo });
-      if (entries.length === 0)
-        return Alert.alert('Missing', 'Add at least one medicine name.');
-    }
-    if (times.length === 0)
-      return Alert.alert('Missing', 'Add at least one time.');
-    if (frequency === 'weekly' && daysOfWeek.length === 0)
-      return Alert.alert('Missing', 'Pick at least one day.');
-
-    const sharedDays =
-      frequency === 'weekly' ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
-
-    // Resolved to dates HERE, once, rather than stored as a length. A length
-    // has to be re-resolved against a start every time it is read, and any
-    // disagreement about which day is day 1 silently moves the end.
-    const courseStart = startDate || todayISO();
-    const courseEnd =
-      durationDays == null ? null : addDaysISO(courseStart, durationDays - 1);
-    const buildDraft = (id, medName, medColor, medPhoto, medForm) => ({
-      id,
-      name: medName,
-      form: medForm || form || 'Tablet',
-      times,
-      snoozeMinutes,
-      frequency,
-      daysOfWeek: sharedDays,
-      toneId: toneId || 'classic',
-      alertGuardian,
-      color: medColor || '#FFFFFF',
-      photo: medPhoto || null,
-      startDate: courseStart,
-      endDate: courseEnd,
-    });
+    const ready = validate();
+    if (!ready) return;
 
     // Guardian request mode: send each medicine as an approval request.
     if (isRequest) {
       setBusy(true);
       try {
-        for (const e of entries) {
-          const res = await createAddMedicineRequest(
-            requestUserId,
-            buildDraft(undefined, e.name, e.color, e.photo, e.form)
-          );
+        for (const d of ready) {
+          const res = await createAddMedicineRequest(requestUserId, buildMedicine(d, undefined));
           if (!res.ok) throw new Error(res.error || 'request failed');
           // Tell them now rather than whenever they next open the app.
           // Best-effort: the request is already saved either way.
-          await notifyPatientOfRequest(requestUserId, e.name);
+          await notifyPatientOfRequest(requestUserId, d.name.trim());
         }
-        Alert.alert(
-          'Request sent',
-          `Sent to @${requestUsername} for approval.`
-        );
+        Alert.alert('Request sent', `Sent to @${requestUsername} for approval.`);
         navigation.goBack();
       } catch (e) {
         Alert.alert('Failed', String(e?.message || e));
@@ -339,46 +256,30 @@ export default function AddMedicineScreen({ route, navigation }) {
     try {
       const ok = await ensureNotificationSetup();
       if (!ok) {
-        Alert.alert(
-          'Permission needed',
-          'Enable notifications to schedule alarms.'
-        );
+        Alert.alert('Permission needed', 'Enable notifications to schedule alarms.');
         return;
       }
 
       const user = await getSession();
 
       if (isEdit) {
-        await updateMedicine(
-          user,
-          editingId,
-          buildDraft(
-            editingId,
-            entries[0].name,
-            entries[0].color,
-            entries[0].photo,
-            entries[0].form
-          )
-        );
+        await updateMedicine(user, editingId, buildMedicine(ready[0], editingId));
       } else {
         let i = 0;
-        for (const e of entries) {
-          const id = `${Date.now()}_${i}_${Math.random()
-            .toString(36)
-            .slice(2, 7)}`;
-          await addMedicine(user, buildDraft(id, e.name, e.color, e.photo, e.form));
+        for (const d of ready) {
+          const id = `${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`;
+          await addMedicine(user, buildMedicine(d, id));
           i += 1;
         }
       }
 
-      // Wipe every scheduled notification and re-arm alarms for ALL medicines
-      // so no stale/leftover snooze can fire at the wrong time.
+      // Wipe every scheduled notification and re-arm alarms for ALL medicines.
+      // Medicines due at the same time share one alarm, so a batch with
+      // different schedules still rings once per time.
       const all = await getMedicines(user);
       const idMap = await resyncAlarms(all);
       for (const m of all) {
-        await updateMedicine(user, m.id, {
-          notificationIds: idMap[m.id] || [],
-        });
+        await updateMedicine(user, m.id, { notificationIds: idMap[m.id] || [] });
       }
 
       navigation.goBack();
@@ -390,6 +291,7 @@ export default function AddMedicineScreen({ route, navigation }) {
   };
 
   const onDelete = () => {
+    const name = drafts[0]?.name || '';
     Alert.alert('Delete medicine', `Remove "${name}"?`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -401,9 +303,7 @@ export default function AddMedicineScreen({ route, navigation }) {
           const all = await getMedicines(user);
           const idMap = await resyncAlarms(all);
           for (const m of all) {
-            await updateMedicine(user, m.id, {
-              notificationIds: idMap[m.id] || [],
-            });
+            await updateMedicine(user, m.id, { notificationIds: idMap[m.id] || [] });
           }
           navigation.goBack();
         },
@@ -411,274 +311,47 @@ export default function AddMedicineScreen({ route, navigation }) {
     ]);
   };
 
+  const batch = !isEdit;
+  const count = drafts.filter((d) => d.name.trim()).length;
+
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={{ padding: 20, paddingBottom: 80 }}
       keyboardShouldPersistTaps="handled"
     >
-      {isEdit ? (
+      {batch ? (
         <>
-          <Text style={styles.label}>Medicine name</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. Paracetamol 500mg"
-            value={name}
-            onChangeText={setName}
-          />
-        </>
-      ) : (
-        <>
-          <Text style={styles.label}>Medicine names</Text>
+          <Text style={styles.sectionTitle}>Medicines</Text>
           <Text style={styles.nameHint}>
-            Add every medicine taken at the time(s) below. Each is saved as its
-            own item but shares this schedule.
+            Each medicine keeps its own times, days and course. Medicines due at
+            the same time share one reminder.
           </Text>
-          {names.length > 0 && (
-            <View style={styles.timesWrap}>
-              {names.map((n) => (
-                <TouchableOpacity
-                  key={n.name}
-                  style={styles.nameChip}
-                  onPress={() => removeName(n.name)}
-                >
-                  {n.photo ? (
-                    <Image
-                      source={{ uri: photoUri(n.photo) }}
-                      style={styles.nameChipPhoto}
-                    />
-                  ) : null}
-                  {/* The chip shows the form it was added with, so a batch of
-                      three medicines visibly reads as tablet / capsule / syrup
-                      rather than as three identical names. */}
-                  {!n.photo ? (
-                    <MedIcon form={n.form} color={n.color} size={16} />
-                  ) : null}
-                  <Text style={styles.nameChipText}>{n.name}  ×</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-          <View style={styles.nameAddRow}>
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              placeholder="e.g. Paracetamol 500mg"
-              value={nameInput}
-              onChangeText={setNameInput}
-              onSubmitEditing={addName}
-              returnKeyType="done"
-              blurOnSubmit={false}
-            />
-            <TouchableOpacity style={styles.nameAddBtn} onPress={addName}>
-              <Text style={styles.nameAddBtnText}>+ Add</Text>
-            </TouchableOpacity>
-          </View>
         </>
-      )}
+      ) : null}
 
-      <Text style={styles.label}>Type</Text>
-      <View style={styles.timesWrap}>
-        {FORM_OPTIONS.map((f) => {
-          const on = form === f.id;
-          return (
-            <TouchableOpacity
-              key={f.id}
-              style={[styles.quickChip, on && styles.quickChipOn]}
-              onPress={() => setForm(f.id)}
-            >
-              <View style={styles.formChipInner}>
-                <MedIcon form={f.id} color={color || '#FFFFFF'} size={18} />
-                <Text style={[styles.quickChipText, on && styles.quickChipTextOn]}>
-                  {f.label}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      {drafts.map((d, i) => (
+        <MedicineDraftCard
+          key={d.key}
+          draft={d}
+          index={i}
+          open={d.key === activeKey}
+          onOpen={() => setOpenKey(d.key)}
+          onChange={(patch) => updateDraft(d.key, patch)}
+          onRemove={batch && drafts.length > 1 ? () => removeDraft(d.key) : null}
+          showHeader={batch}
+        />
+      ))}
 
-      <Text style={styles.label}>Colour</Text>
-      <Text style={styles.nameHint}>
-        {isEdit
-          ? 'How this medicine is shown in your list and on the alarm.'
-          : 'Pick a colour, then add the medicine above — each medicine keeps its own colour.'}
-      </Text>
-      <View style={styles.colorRow}>
-        {MED_COLORS.map((c) => {
-          const selected = color === c.hex;
-          return (
-            <TouchableOpacity
-              key={c.hex}
-              onPress={() => setColor(c.hex)}
-              style={styles.colorItem}
-              accessibilityRole="button"
-              accessibilityLabel={`${c.name} ${formFor(form).label}`}
-              accessibilityState={{ selected }}
-            >
-              {/* The swatch previews the actual medicine: the form decides the
-                  glyph, the colour is the user's coding. */}
-              <View
-                style={[
-                  styles.colorSwatch,
-                  { backgroundColor: tintFor(c.hex), borderColor: c.hex },
-                  selected && styles.colorSwatchSelected,
-                ]}
-              >
-                <MedIcon form={form} color={c.hex} size={22} />
-              </View>
-              <Text style={styles.colorName}>{c.name}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={styles.label}>Photo (optional)</Text>
-      <Text style={styles.nameHint}>
-        {isEdit
-          ? 'A picture of the tablet, strip or bottle — shown when the alarm rings so it is easy to pick the right one.'
-          : 'A picture of the tablet, strip or bottle — shown when the alarm rings. Attach it before adding the medicine above; each medicine keeps its own photo.'}
-      </Text>
-      <View style={styles.photoRow}>
-        {photo ? (
-          <Image source={{ uri: photoUri(photo) }} style={styles.photoPreview} />
-        ) : (
-          <View style={[styles.photoPreview, styles.photoEmpty]}>
-            <Text style={styles.photoEmptyText}>No{'\n'}photo</Text>
-          </View>
-        )}
-        <View style={styles.photoBtns}>
-          <TouchableOpacity
-            style={styles.photoBtn}
-            onPress={() => grabPhoto('camera')}
-            disabled={photoBusy}
-          >
-            <Text style={styles.photoBtnText}>
-              {photoBusy ? 'Working…' : '📷  Take a photo'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.photoBtn}
-            onPress={() => grabPhoto('library')}
-            disabled={photoBusy}
-          >
-            <Text style={styles.photoBtnText}>🖼  Choose from gallery</Text>
-          </TouchableOpacity>
-          {photo ? (
-            <TouchableOpacity onPress={() => setPhoto(null)}>
-              <Text style={styles.photoRemove}>
-                Remove photo · {photoSizeLabel(photo)}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </View>
-
-      <Text style={styles.label}>How many times a day?</Text>
-      <Text style={styles.nameHint}>
-        Sets the times below — you can still change any of them.
-      </Text>
-      <View style={styles.timesWrap}>
-        {DOSES_PER_DAY.map((d) => {
-          const on = times.length === d.n;
-          return (
-            <TouchableOpacity
-              key={d.n}
-              style={[styles.quickChip, on && styles.quickChipOn]}
-              onPress={() => setTimes(d.times)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}
-            >
-              <Text style={[styles.quickChipText, on && styles.quickChipTextOn]}>
-                {d.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={styles.label}>How long?</Text>
-      <Text style={styles.nameHint}>
-        {durationDays == null
-          ? 'Ongoing — no planned end date.'
-          : `${durationDays} days, ending ${new Date(
-              addDaysISO(startDate || todayISO(), durationDays - 1) + 'T00:00:00'
-            ).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}. Alarms stop by themselves.`}
-      </Text>
-      <View style={styles.timesWrap}>
-        {DURATIONS.map((d) => {
-          const on = durationDays === d.days;
-          return (
-            <TouchableOpacity
-              key={String(d.days)}
-              style={[styles.quickChip, on && styles.quickChipOn]}
-              onPress={() => setDurationDays(d.days)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}
-            >
-              <Text style={[styles.quickChipText, on && styles.quickChipTextOn]}>
-                {d.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={styles.label}>Times</Text>
-      <View style={styles.timesWrap}>
-        {times.map((t) => (
-          <TouchableOpacity
-            key={t}
-            style={styles.timeChip}
-            onPress={() => removeTime(t)}
-          >
-            <Text style={styles.timeChipText}>{formatTime(t)}  ×</Text>
-          </TouchableOpacity>
-        ))}
-        <TouchableOpacity style={styles.addTimeBtn} onPress={openPicker}>
-          <Text style={styles.addTimeText}>+ Custom time</Text>
+      {batch ? (
+        <TouchableOpacity style={styles.addAnotherBtn} onPress={addAnother}>
+          <Text style={styles.addAnotherText}>+ Add another medicine</Text>
         </TouchableOpacity>
-      </View>
+      ) : null}
 
-
-      <Text style={styles.label}>Frequency</Text>
-      <View style={styles.segment}>
-        <TouchableOpacity
-          style={[
-            styles.segmentItem,
-            frequency === 'daily' && styles.segmentItemActive,
-          ]}
-          onPress={() => setFrequency('daily')}
-        >
-          <Text
-            style={[
-              styles.segmentText,
-              frequency === 'daily' && styles.segmentTextActive,
-            ]}
-          >
-            Daily
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.segmentItem,
-            frequency === 'weekly' && styles.segmentItemActive,
-          ]}
-          onPress={() => setFrequency('weekly')}
-        >
-          <Text
-            style={[
-              styles.segmentText,
-              frequency === 'weekly' && styles.segmentTextActive,
-            ]}
-          >
-            Specific days
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {frequency === 'weekly' && (
-        <DaysSelector value={daysOfWeek} onChange={setDaysOfWeek} />
-      )}
+      {batch && drafts.length > 1 ? (
+        <Text style={styles.sharedTitle}>For all {drafts.length} medicines</Text>
+      ) : null}
 
       <Text style={styles.label}>Alarm tone</Text>
       <Text style={styles.nameHint}>
@@ -724,10 +397,7 @@ export default function AddMedicineScreen({ route, navigation }) {
         {SNOOZE_OPTIONS.map((m) => (
           <TouchableOpacity
             key={m}
-            style={[
-              styles.snoozeOption,
-              snoozeMinutes === m && styles.snoozeOptionActive,
-            ]}
+            style={[styles.snoozeOption, snoozeMinutes === m && styles.snoozeOptionActive]}
             onPress={() => setSnoozeMinutes(m)}
           >
             <Text
@@ -763,6 +433,8 @@ export default function AddMedicineScreen({ route, navigation }) {
             ? 'Saving...'
             : isRequest
             ? 'Send request'
+            : batch && count > 1
+            ? `Save all ${count}`
             : 'Save'}
         </Text>
       </TouchableOpacity>
@@ -772,20 +444,31 @@ export default function AddMedicineScreen({ route, navigation }) {
           <Text style={styles.deleteBtnText}>Delete medicine</Text>
         </TouchableOpacity>
       )}
-
-      <WheelTimePicker
-        visible={pickerOpen}
-        initialHour={pickerInitial.hour}
-        initialMinute={pickerInitial.minute}
-        onCancel={() => setPickerOpen(false)}
-        onConfirm={onPickerConfirm}
-      />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
+  sectionTitle: { fontSize: 17, fontWeight: '800', color: theme.heading, marginBottom: 4 },
+  addAnotherBtn: {
+    borderWidth: 1.5,
+    borderColor: '#4CAF50',
+    borderStyle: 'dashed',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  addAnotherText: { color: '#2e7d32', fontWeight: '800', fontSize: 15 },
+  sharedTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: theme.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 18,
+  },
   label: {
     fontSize: 14,
     fontWeight: '600',
