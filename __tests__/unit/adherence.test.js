@@ -1,5 +1,7 @@
 import {
   DAY_STATE,
+  DOSE,
+  bandFor,
   dayKey,
   startOfWeek,
   startOfMonth,
@@ -19,6 +21,8 @@ const took = (slot) => ({ status: 'taken', slot });
 
 // A Wednesday, so weekday maths is visible rather than accidental.
 const WED = new Date('2026-08-05T09:00:00');
+// Judging Wednesday once it is over, so every dose has a verdict.
+const AFTER = new Date('2026-08-06T09:00:00');
 
 describe('dayKey', () => {
   it('formats a local date', () => {
@@ -33,17 +37,25 @@ describe('dayKey', () => {
 });
 
 describe('week and month boundaries', () => {
-  it('starts weeks on Monday', () => {
-    expect(dayKey(startOfWeek(WED))).toBe('2026-08-03');
+  it('starts weeks on Sunday, like the S M T W T F S header', () => {
+    expect(dayKey(startOfWeek(WED))).toBe('2026-08-02');
   });
 
-  it('treats Sunday as the end of its week, not the start of a new one', () => {
+  it('treats Sunday as the start of its week', () => {
     const sunday = new Date('2026-08-09T12:00:00');
-    expect(dayKey(startOfWeek(sunday))).toBe('2026-08-03');
+    expect(dayKey(startOfWeek(sunday))).toBe('2026-08-09');
   });
 
   it('starts months on the first', () => {
     expect(dayKey(startOfMonth(WED))).toBe('2026-08-01');
+  });
+});
+
+describe('bandFor', () => {
+  it('splits the day into morning, afternoon and night', () => {
+    expect(['06:00', '11:59', '12:00', '16:59', '17:00', '23:30'].map(bandFor)).toEqual([
+      'morning', 'morning', 'afternoon', 'afternoon', 'night', 'night',
+    ]);
   });
 });
 
@@ -67,35 +79,83 @@ describe('dayAdherence', () => {
 
   it('is full when every dose is taken', () => {
     const entries = { a: [took('08:00'), took('20:00')], b: [took('09:00')] };
-    expect(dayAdherence(meds, entries, WED, WED)).toMatchObject({
-      state: DAY_STATE.FULL, due: 3, taken: 3,
+    expect(dayAdherence(meds, entries, WED, AFTER)).toMatchObject({
+      state: DAY_STATE.FULL, due: 3, taken: 3, missed: 0,
     });
   });
 
   it('is partial when some are missing', () => {
     const entries = { a: [took('08:00')], b: [took('09:00')] };
-    expect(dayAdherence(meds, entries, WED, WED)).toMatchObject({
-      state: DAY_STATE.PARTIAL, due: 3, taken: 2,
+    expect(dayAdherence(meds, entries, WED, AFTER)).toMatchObject({
+      state: DAY_STATE.PARTIAL, due: 3, taken: 2, missed: 1,
     });
   });
 
   it('is missed when nothing was taken', () => {
-    expect(dayAdherence(meds, {}, WED, WED)).toMatchObject({
-      state: DAY_STATE.MISSED, due: 3, taken: 0,
+    expect(dayAdherence(meds, {}, WED, AFTER)).toMatchObject({
+      state: DAY_STATE.MISSED, due: 3, taken: 0, missed: 3,
     });
   });
 
   // The bug this whole module exists to avoid.
   it('does not let a morning dose cover the evening one', () => {
     const entries = { a: [took('08:00'), took('08:00')] };
-    const result = dayAdherence([daily('a', ['08:00', '20:00'])], entries, WED, WED);
+    const result = dayAdherence([daily('a', ['08:00', '20:00'])], entries, WED, AFTER);
     expect(result.taken).toBe(1);
     expect(result.state).toBe(DAY_STATE.PARTIAL);
   });
 
-  it('ignores skipped and snoozed entries', () => {
+  it('counts a skipped dose as missed', () => {
     const entries = { b: [{ status: 'skipped', slot: '09:00' }] };
-    expect(dayAdherence([daily('b', ['09:00'])], entries, WED, WED).taken).toBe(0);
+    const result = dayAdherence([daily('b', ['09:00'])], entries, WED, WED);
+    expect(result).toMatchObject({ taken: 0, missed: 1, state: DAY_STATE.MISSED });
+  });
+
+  // Was the visible bug: at 9 AM today already showed red, because the 8 PM
+  // dose — hours away — was counted as not taken.
+  it('does not count today`s later doses against you', () => {
+    const at9 = new Date('2026-08-05T09:00:00');
+    const result = dayAdherence(
+      [daily('a', ['08:00', '20:00'])], { a: [took('08:00')] }, WED, at9
+    );
+    expect(result).toMatchObject({ state: DAY_STATE.FULL, due: 1, taken: 1, missed: 0 });
+    expect(result.doses.map((d) => d.state)).toEqual([DOSE.TAKEN, DOSE.FUTURE]);
+  });
+
+  it('gives a dose its grace period before calling it missed', () => {
+    const med = [daily('a', ['08:00'])];
+    const inside = dayAdherence(med, {}, WED, new Date('2026-08-05T08:20:00'), 30);
+    const after = dayAdherence(med, {}, WED, new Date('2026-08-05T08:31:00'), 30);
+    expect(inside.doses[0].state).toBe(DOSE.DUE);
+    expect(inside.state).toBe(DAY_STATE.FUTURE);
+    expect(after.doses[0].state).toBe(DOSE.MISSED);
+  });
+
+  it('holds a snoozed dose open until its re-alarm and grace run out', () => {
+    const med = [{ ...daily('a', ['08:00']), snoozeMinutes: 10 }];
+    const entries = { a: [{ status: 'snoozed', slot: '08:00', at: '2026-08-05T08:25:00' }] };
+    expect(dayAdherence(med, entries, WED, new Date('2026-08-05T08:50:00')).doses[0].state)
+      .toBe(DOSE.SNOOZED);
+    expect(dayAdherence(med, entries, WED, new Date('2026-08-05T09:10:00')).doses[0].state)
+      .toBe(DOSE.MISSED);
+  });
+
+  it('files an old entry with no slot under a single-time medicine', () => {
+    const result = dayAdherence([daily('a', ['08:00'])], { a: [{ status: 'taken' }] }, WED, AFTER);
+    expect(result.state).toBe(DAY_STATE.FULL);
+  });
+
+  it('colours each bar by the worst dose in that part of the day', () => {
+    const meds3 = [daily('a', ['08:00', '13:00']), daily('b', ['08:30', '21:00'])];
+    const entries = { a: [took('08:00'), took('13:00')], b: [took('21:00')] };
+    expect(dayAdherence(meds3, entries, WED, AFTER).bands).toEqual({
+      morning: DOSE.MISSED, afternoon: DOSE.TAKEN, night: DOSE.TAKEN,
+    });
+  });
+
+  it('leaves a bar empty when nothing is scheduled then', () => {
+    const result = dayAdherence([daily('a', ['08:00'])], { a: [took('08:00')] }, WED, AFTER);
+    expect(result.bands).toEqual({ morning: DOSE.TAKEN, afternoon: 'none', night: 'none' });
   });
 
   it('reports nothing due rather than a perfect or missed day', () => {
@@ -195,14 +255,14 @@ describe('currentStreak', () => {
 });
 
 describe('windowFor', () => {
-  it('gives the current Monday-to-Sunday week', () => {
+  it('gives the current Sunday-to-Saturday week', () => {
     const { from, to } = windowFor('week', 0, WED);
-    expect([dayKey(from), dayKey(to)]).toEqual(['2026-08-03', '2026-08-09']);
+    expect([dayKey(from), dayKey(to)]).toEqual(['2026-08-02', '2026-08-08']);
   });
 
   it('steps back a week at a time', () => {
     const { from, to } = windowFor('week', -1, WED);
-    expect([dayKey(from), dayKey(to)]).toEqual(['2026-07-27', '2026-08-02']);
+    expect([dayKey(from), dayKey(to)]).toEqual(['2026-07-26', '2026-08-01']);
   });
 
   it('gives a whole calendar month, including its real length', () => {

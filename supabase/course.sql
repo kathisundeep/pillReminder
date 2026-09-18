@@ -11,8 +11,13 @@
 -- end_date NULL means ongoing, which stays the default — most long-term
 -- medicines genuinely have no end.
 
+-- Existing medicines start on the day they were ADDED, not the day this ran:
+-- stamping "today" on them hid their whole history from the calendar.
 alter table public.medicines
-  add column if not exists start_date date not null default current_date;
+  add column if not exists start_date date;
+update public.medicines set start_date = created_at::date where start_date is null;
+alter table public.medicines alter column start_date set default current_date;
+alter table public.medicines alter column start_date set not null;
 
 alter table public.medicines
   add column if not exists end_date date;

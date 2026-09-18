@@ -1,4 +1,4 @@
-import { isDueToday } from './doseState';
+import { isDueToday, doseDateOn } from './doseState';
 
 // Turning dose history into "how am I doing".
 //
@@ -14,11 +14,35 @@ import { isDueToday } from './doseState';
 
 export const DAY_STATE = {
   NONE: 'none',       // nothing was due
-  FULL: 'full',       // every dose taken
-  PARTIAL: 'partial', // some taken, some not
-  MISSED: 'missed',   // due, none taken
-  FUTURE: 'future',   // hasn't happened yet
+  FULL: 'full',       // every dose judged so far was taken
+  PARTIAL: 'partial', // some taken, some missed
+  MISSED: 'missed',   // doses missed, none taken
+  FUTURE: 'future',   // nothing can be judged yet
 };
+
+// One scheduled dose. Only TAKEN and MISSED are verdicts; the rest are a dose
+// whose time has not run out, and count neither for nor against.
+export const DOSE = {
+  TAKEN: 'taken',
+  MISSED: 'missed',     // skipped, or its time plus grace ran out untaken
+  SNOOZED: 'snoozed',   // re-alarm pending
+  DUE: 'due',           // its time has come, still inside the grace period
+  FUTURE: 'future',     // its time has not come
+};
+
+// The calendar splits each day into three bars, as the reference does.
+export const BANDS = [
+  { id: 'morning', label: 'Morning' },
+  { id: 'afternoon', label: 'Afternoon' },
+  { id: 'night', label: 'Night' },
+];
+
+export function bandFor(hhmm) {
+  const hour = Number(String(hhmm).split(':')[0]);
+  if (hour < 12) return 'morning';
+  if (hour < 17) return 'afternoon';
+  return 'night';
+}
 
 export function dayKey(date) {
   const d = new Date(date);
@@ -39,12 +63,10 @@ export function addDays(date, n) {
   return d;
 }
 
-// Weeks run Monday–Sunday: a pill routine is lived weekly, and splitting the
-// weekend across two rows makes "I always miss Saturdays" hard to see.
+// Weeks run Sunday–Saturday, matching the calendar's S M T W T F S header.
 export function startOfWeek(date) {
   const d = startOfDay(date);
-  const shift = (d.getDay() + 6) % 7;
-  return addDays(d, -shift);
+  return addDays(d, -d.getDay());
 }
 
 export function startOfMonth(date) {
@@ -59,36 +81,81 @@ export function dosesDueOn(med, date) {
   return Array.isArray(med?.times) ? med.times.length : 0;
 }
 
-// One day's verdict. `entriesByMed` is history[day] — { medicineId: [{status, slot}] }.
-export function dayAdherence(medicines, entriesByMed, date, now = new Date()) {
-  const isFuture = startOfDay(date) > startOfDay(now);
+// What became of one dose: the medicine's `slot` on `date`, judged at `now`.
+// `grace` is the minutes a dose may run late before it counts as missed — the
+// same allowance the guardian alert gives.
+export function doseOutcome(med, entries, slot, date, now = new Date(), grace = 30) {
+  // Entries from before doses were keyed by slot carry none; for a medicine
+  // with a single time there is no doubt which dose they meant.
+  const mine = (entries || []).filter(
+    (e) => e.slot === slot || (e.slot == null && (med.times || []).length === 1)
+  );
+  if (mine.some((e) => e.status === 'taken')) return DOSE.TAKEN;
+  if (mine.some((e) => e.status === 'skipped')) return DOSE.MISSED;
 
-  let due = 0;
-  let taken = 0;
+  const at = doseDateOn(slot, date);
+  if (at > now) return DOSE.FUTURE;
 
-  for (const med of medicines || []) {
-    const owed = dosesDueOn(med, date);
-    if (owed === 0) continue;
-    due += owed;
-
-    const entries = entriesByMed?.[med.id] || [];
-    // Count DISTINCT slots taken, so two taps on the same dose do not read as
-    // two doses, and an 08:00 tablet taken twice cannot cover the 20:00 one.
-    const takenSlots = new Set(
-      entries.filter((e) => e.status === 'taken').map((e) => e.slot ?? '_')
-    );
-    taken += Math.min(takenSlots.size, owed);
+  const graceMs = grace * 60000;
+  const lastSnooze = mine
+    .filter((e) => e.status === 'snoozed' && e.at)
+    .map((e) => new Date(e.at).getTime())
+    .sort((x, y) => x - y)
+    .pop();
+  if (lastSnooze) {
+    const fire = lastSnooze + (Number(med.snoozeMinutes) || 10) * 60000;
+    if (now.getTime() < fire + graceMs) return DOSE.SNOOZED;
   }
+  if (now.getTime() < at.getTime() + graceMs) return DOSE.DUE;
+  return DOSE.MISSED;
+}
 
-  if (due === 0) return { state: DAY_STATE.NONE, due: 0, taken: 0, date };
-  if (isFuture) return { state: DAY_STATE.FUTURE, due, taken: 0, date };
-  if (taken >= due) return { state: DAY_STATE.FULL, due, taken, date };
-  if (taken === 0) return { state: DAY_STATE.MISSED, due, taken, date };
-  return { state: DAY_STATE.PARTIAL, due, taken, date };
+// The worst state among a bar's doses decides its colour: a missed dose must
+// never hide behind a taken one at the same time of day.
+const BAR_RANK = [DOSE.MISSED, DOSE.DUE, DOSE.SNOOZED, DOSE.FUTURE, DOSE.TAKEN];
+
+function barState(doses) {
+  if (!doses.length) return 'none';
+  return BAR_RANK.find((st) => doses.some((d) => d.state === st));
+}
+
+// One day's verdict. `entriesByMed` is history[day] — { medicineId: [{status, slot, at}] }.
+//
+// `due` counts the doses that have a verdict (taken or missed), so a dose
+// whose time has not run out neither lowers the score nor breaks a streak.
+export function dayAdherence(medicines, entriesByMed, date, now = new Date(), grace = 30) {
+  const doses = [];
+  for (const med of medicines || []) {
+    if (!isDueToday(med, date)) continue;
+    for (const slot of med.times || []) {
+      doses.push({
+        med,
+        slot,
+        band: bandFor(slot),
+        state: doseOutcome(med, entriesByMed?.[med.id], slot, date, now, grace),
+      });
+    }
+  }
+  doses.sort((x, y) => (x.slot < y.slot ? -1 : x.slot > y.slot ? 1 : 0));
+
+  const taken = doses.filter((d) => d.state === DOSE.TAKEN).length;
+  const missed = doses.filter((d) => d.state === DOSE.MISSED).length;
+  const due = taken + missed;
+  const bands = {};
+  for (const b of BANDS) bands[b.id] = barState(doses.filter((d) => d.band === b.id));
+
+  let state;
+  if (!doses.length) state = DAY_STATE.NONE;
+  else if (due === 0) state = DAY_STATE.FUTURE;
+  else if (missed === 0) state = DAY_STATE.FULL;
+  else if (taken === 0) state = DAY_STATE.MISSED;
+  else state = DAY_STATE.PARTIAL;
+
+  return { state, due, taken, missed, doses, bands, date };
 }
 
 // A run of days, oldest first.
-export function rangeAdherence(medicines, history, from, to, now = new Date()) {
+export function rangeAdherence(medicines, history, from, to, now = new Date(), grace = 30) {
   const days = [];
   let cursor = startOfDay(from);
   const end = startOfDay(to);
@@ -96,7 +163,7 @@ export function rangeAdherence(medicines, history, from, to, now = new Date()) {
   let guard = 0;
   while (cursor <= end && guard < 800) {
     const key = dayKey(cursor);
-    days.push({ key, ...dayAdherence(medicines, history?.[key], cursor, now) });
+    days.push({ key, ...dayAdherence(medicines, history?.[key], cursor, now, grace) });
     cursor = addDays(cursor, 1);
     guard += 1;
   }
@@ -139,9 +206,9 @@ export function currentStreak(days) {
 
 // The three views the calendar offers.
 export const SEGMENTS = [
-  { id: 'week', label: 'Week' },
-  { id: 'month', label: 'Month' },
-  { id: 'year', label: 'Year' },
+  { id: 'week', label: 'Weekly' },
+  { id: 'month', label: 'Monthly' },
+  { id: 'year', label: 'Yearly' },
 ];
 
 // The date window for a segment, `offset` steps back from now (0 = current).
