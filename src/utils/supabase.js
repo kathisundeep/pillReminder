@@ -31,3 +31,13 @@ export const supabase = createClient(
     },
   }
 );
+
+// Who is signed in, read from the stored session — no network. It returns the
+// same shape as supabase.auth.getUser(), which asks the auth server every time:
+// a full round trip (~0.5 s) spent before nearly every query, several times per
+// screen. Nothing is trusted on the strength of this: row-level security checks
+// the access token on every request.
+export async function localUser() {
+  const { data } = await supabase.auth.getSession();
+  return { data: { user: data?.session?.user || null } };
+}

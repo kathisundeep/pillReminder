@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, localUser } from './supabase';
 
 // Phase 1 guardian pairing — thin wrappers over the Postgres RPC functions in
 // supabase/pairing.sql. RLS + security-definer functions enforce all rules.
@@ -33,7 +33,7 @@ export async function revokeGuardian() {
 // that also guards someone else matches the wrong row and reports itself as its
 // own guardian.
 export async function getMyActiveGuardian() {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return null;
   const { data, error } = await supabase
     .from('guardian_links')
@@ -54,18 +54,18 @@ export async function getMyActiveGuardian() {
 
 // ---- Profile settings (grace / notifyMode / approvalRequired) ----
 export async function getMyProfile() {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return null;
   const { data } = await supabase
     .from('profiles')
-    .select('username, display_name, settings')
+    .select('username, display_name, settings, is_guardian')
     .eq('id', u.user.id)
     .maybeSingle();
   return data;
 }
 
 export async function updateMySettings(patch) {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return;
   const { data } = await supabase
     .from('profiles')
@@ -81,7 +81,7 @@ export async function updateMySettings(patch) {
 // guardian can be reached for missed-dose alerts.
 export async function saveMyPushToken(token) {
   if (!token) return;
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return;
   await supabase.from('profiles').update({ push_token: token }).eq('id', u.user.id);
 }
@@ -89,7 +89,7 @@ export async function saveMyPushToken(token) {
 // User's device reads its active guardian's push token (RLS lets the user read
 // the linked guardian's profile). Returns { token, settings } or null.
 export async function getActiveGuardianTarget() {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return null;
   const { data: link } = await supabase
     .from('guardian_links')
@@ -119,7 +119,7 @@ export async function getUserMedicines(userId) {
 
 // ---- Action requests (guardian add-medicine → user approval) ----
 export async function createAddMedicineRequest(userId, medPayload) {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   const { error } = await supabase.from('action_requests').insert({
     user_id: userId,
     guardian_id: u.user.id,
@@ -136,7 +136,7 @@ export async function createAddMedicineRequest(userId, medPayload) {
 // request as one to approve — and approving it writes the medicine into the
 // guardian's own account instead of the patient's.
 export async function getPendingRequests() {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return [];
   const { data } = await supabase
     .from('action_requests')
@@ -150,7 +150,7 @@ export async function getPendingRequests() {
 // Requests this guardian has filed, so their own screens can show progress
 // without ever being offered as approvable.
 export async function getMyOutgoingRequests() {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return [];
   const { data } = await supabase
     .from('action_requests')
@@ -166,7 +166,7 @@ export async function setRequestStatus(id, status) {
 
 // Guardian: users this guardian is linked to (with usernames).
 export async function getLinkedUsers() {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return [];
   const { data, error } = await supabase
     .from('guardian_links')

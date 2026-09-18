@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, localUser } from './supabase';
 
 const FREE = { id: 'free', name: 'Free', price_cents: 0, currency: 'INR', interval: 'month', max_guardians: 1, features: {} };
 
@@ -12,7 +12,7 @@ export async function getPlans() {
 
 // The user's current active plan (defaults to Free).
 export async function getMyPlan() {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return FREE;
   const { data } = await supabase
     .from('subscriptions')
@@ -38,7 +38,7 @@ export async function getMyPlan() {
 // unilaterally, and it is a cancellation rather than a grant — it also has to
 // go through the server so the provider's recurring mandate is cancelled too.
 export async function requestPlanChange(planId) {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) throw new Error('not signed in');
 
   const { data, error } = await supabase.functions.invoke('change-plan', {

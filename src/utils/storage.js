@@ -11,6 +11,7 @@ const KEYS = {
   ALERTS: (user) => `@pr_alerts_${user}`,
   PUSH_TOKEN: '@pr_push_token',
   MEDS_CACHE: '@pr_meds_cache',   // offline cache of medicines (for alarms)
+  DAY_CACHE: '@pr_day_cache',     // today's dose entries, so Home can paint at once
   NOTIF_IDS: '@pr_notif_ids',     // { [medId]: [notificationId,...] } device-local
   IMPORTED: '@pr_legacy_imported', // per-account 'we already did the one-time import'
 };
@@ -70,6 +71,11 @@ export async function logoutUser() {
   await supabase.auth.signOut();
   session.uid = null;
   session.username = null;
+  // The next person to sign in on this phone must not see these, even for
+  // the moment before their own copies load.
+  try {
+    await AsyncStorage.multiRemove([KEYS.MEDS_CACHE, KEYS.DAY_CACHE]);
+  } catch (e) {}
 }
 
 // Returns the logged-in username (for display) or null. Reads the locally
@@ -339,7 +345,31 @@ export async function getDoseEntriesForDay(user, dateKey) {
     if (!byMedicine[row.medicine_id]) byMedicine[row.medicine_id] = [];
     byMedicine[row.medicine_id].push(row);
   }
+  try {
+    await AsyncStorage.setItem(KEYS.DAY_CACHE, JSON.stringify({ day, byMedicine }));
+  } catch (e) {}
   return byMedicine;
+}
+
+// What this phone last knew — no network. Home draws from these first so it
+// is on screen at once, then replaces them with the fresh copies.
+export async function getCachedMedicines() {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.MEDS_CACHE);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function getCachedDayEntries(dateKey) {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.DAY_CACHE);
+    const cached = raw ? JSON.parse(raw) : null;
+    return cached && cached.day === (dateKey || todayKey()) ? cached.byMedicine : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 export function entriesForSlot(entries, slot) {

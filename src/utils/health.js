@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, localUser } from './supabase';
 
 // Health trackers stored in public.health_readings (RLS: owner + linked guardian
 // read). `values` is a jsonb blob shaped per type.
@@ -114,7 +114,7 @@ export function typeById(id) {
 }
 
 export async function addReading(type, values, note) {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) throw new Error('not signed in');
   const t = typeById(type);
   const { error } = await supabase.from('health_readings').insert({
@@ -163,7 +163,7 @@ async function readingsFor(userId, type, limit) {
 
 // Recent readings for the signed-in user (optionally filtered by type).
 export async function getReadings(type, limit = 60) {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return [];
   return readingsFor(u.user.id, type, limit);
 }

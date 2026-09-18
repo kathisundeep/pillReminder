@@ -25,6 +25,8 @@ import {
   setOwnPushToken,
   hasAlertedGuardian,
   markAlertedGuardian,
+  getCachedMedicines,
+  getCachedDayEntries,
 } from '../../src/utils/storage';
 
 const db = () => globalThis.__db;
@@ -233,6 +235,29 @@ describe('medicines CRUD', () => {
 });
 
 describe('offline medicine cache', () => {
+  it('keeps today`s entries for an instant first paint, and only for today', async () => {
+    await signedIn();
+    const id = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await recordDose(null, id, 'taken', '08:00');
+    await getDoseEntriesForDay();
+
+    expect((await getCachedDayEntries())[id][0].status).toBe('taken');
+    expect(await getCachedDayEntries('1999-01-01')).toBeNull();
+  });
+
+  it('forgets both caches on log out, so the next account never sees them', async () => {
+    await signedIn();
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await getMedicines();
+    await getDoseEntriesForDay();
+
+    await logoutUser();
+
+    expect(await getCachedMedicines()).toBeNull();
+    expect(await getCachedDayEntries()).toBeNull();
+  });
+
+
   it('caches the list after a successful fetch', async () => {
     await signedIn();
     await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });

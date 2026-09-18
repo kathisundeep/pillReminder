@@ -10,11 +10,14 @@ import {
   AppState,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getMedicines,
   deleteMedicine,
   getSession,
   getDoseEntriesForDay,
+  getCachedMedicines,
+  getCachedDayEntries,
   setTakenToday,
   todayKey,
   recordDose,
@@ -47,9 +50,41 @@ import {
   EmptyState,
 } from '../components/ui';
 import MedThumb from '../components/MedThumb';
+import ActionSheet from '../components/ActionSheet';
+import SwipeToDelete from '../components/SwipeToDelete';
 import StatusSelect from '../components/StatusSelect';
 import BottomBar from '../components/BottomBar';
 import { colors, radius, shadow, periodFor, formFor } from '../theme';
+
+const TIP_KEY = '@pr_tip_home_gestures';
+
+// Home's picture of today: one card per time, each dose with its state.
+function buildDay(list, entriesByMedicine, now, grace) {
+  const slotMap = {}; // time -> [{med, slot, state}]
+  const off = [];
+  for (const med of list) {
+    if (!isDueToday(med, now)) {
+      off.push(med);
+      continue;
+    }
+    const entries = entriesByMedicine[med.id] || [];
+    // Each scheduled time is its own dose, so a morning dose being taken
+    // leaves the evening one still pending.
+    for (const t of med.times || []) {
+      if (!slotMap[t]) slotMap[t] = [];
+      let state = medState(med, entries, now, t);
+      // A dose left unanswered past its time and grace is missed, not due.
+      if (state === 'pending' && doseOutcome(med, entries, t, now, now, grace) === DOSE.MISSED) {
+        state = 'missed';
+      }
+      slotMap[t].push({ med, slot: t, state });
+    }
+  }
+  const slots = Object.keys(slotMap)
+    .sort()
+    .map((t) => ({ time: t, items: slotMap[t] }));
+  return { slots, off };
+}
 
 function todayLabel(now) {
   return now.toLocaleDateString([], {
@@ -75,6 +110,27 @@ export default function HomeScreen({ navigation }) {
   // left open past midnight would show yesterday and record into today.
   const shownDay = useRef(todayKey());
 
+  // Press-and-hold menus: { kind: 'slot', slot } or { kind: 'med', med }.
+  const [menu, setMenu] = useState(null);
+  const [showTip, setShowTip] = useState(false);
+
+  // The last lists drawn, so a status change can be shown at once without
+  // waiting for the network.
+  const medsRef = useRef([]);
+  const entriesRef = useRef({});
+  const graceRef = useRef(30);
+  // Bumped by every change on screen. A reload that started before it is
+  // stale and must not draw over what the user just did.
+  const version = useRef(0);
+
+  const draw = useCallback((list, entriesByMedicine) => {
+    medsRef.current = list;
+    entriesRef.current = entriesByMedicine;
+    const { slots: next, off } = buildDay(list, entriesByMedicine, new Date(), graceRef.current);
+    setSlots(next);
+    setOtherDays(off);
+  }, []);
+
   const load = useCallback(async () => {
     const u = await getSession();
     if (!u) {
@@ -83,88 +139,62 @@ export default function HomeScreen({ navigation }) {
       return;
     }
     setUser(u);
-    const list = await getMedicines(u);
+    const mine = ++version.current;
     const now = new Date();
     if (todayKey(now) !== shownDay.current) {
       shownDay.current = todayKey(now);
       setOpened(new Set());
     }
 
-    // One query for the whole day rather than one per medicine.
-    const entriesByMedicine = await getDoseEntriesForDay(u);
+    // 1. What this phone already knows, on screen at once.
+    const [cachedMeds, cachedEntries] = await Promise.all([
+      getCachedMedicines(),
+      getCachedDayEntries(),
+    ]);
+    if (cachedMeds && mine === version.current) draw(cachedMeds, cachedEntries || {});
+
+    // 2. Fresh copies, fetched side by side rather than one after another.
+    const [list, entries, profile] = await Promise.all([
+      getMedicines(u),
+      getDoseEntriesForDay(u),
+      getMyProfile().catch(() => null),
+    ]);
     // How late a dose may run before it counts as missed — the guardian
     // alert's allowance, so Home and the alert agree.
-    let grace = 30;
-    try {
-      grace = Number((await getMyProfile())?.settings?.graceMinutes) || 30;
-    } catch (e) {}
-
-    const slotMap = {}; // time -> [{med, slot, state}]
-    const off = [];
-    for (const med of list) {
-      if (!isDueToday(med, now)) {
-        off.push(med);
-        continue;
-      }
-      const entries = entriesByMedicine[med.id] || [];
-      // Each scheduled time is its own dose, so a morning dose being taken
-      // leaves the evening one still pending.
-      for (const t of med.times || []) {
-        if (!slotMap[t]) slotMap[t] = [];
-        let state = medState(med, entries, now, t);
-        // A dose left unanswered past its time and grace is missed, not due.
-        if (state === 'pending' && doseOutcome(med, entries, t, now, now, grace) === DOSE.MISSED) {
-          state = 'missed';
-        }
-        slotMap[t].push({ med, slot: t, state });
-      }
-    }
-    const sorted = Object.keys(slotMap)
-      .sort()
-      .map((t) => ({ time: t, items: slotMap[t] }));
-    setSlots(sorted);
-    setOtherDays(off);
+    graceRef.current = Number(profile?.settings?.graceMinutes) || 30;
+    if (mine === version.current) draw(list, entries);
 
     // Catch up on any missed/skipped doses while the app was closed.
     sweepMissedDoses();
 
+    // 3. Everything else, which never holds the list up.
+    const [onboard, pending, tipSeen] = await Promise.all([
+      needsOnboarding().catch(() => false),
+      getPendingRequests().catch(() => []),
+      AsyncStorage.getItem(TIP_KEY).catch(() => '1'),
+    ]);
     // A quiet nudge, never a gate: the details step was skippable on purpose.
-    try {
-      setShowDetailsPrompt(await needsOnboarding());
-    } catch (e) {
-      setShowDetailsPrompt(false);
-    }
+    setShowDetailsPrompt(!!onboard);
+    setShowTip(!tipSeen);
 
     // Guardian add-medicine requests. If the user turned approval off, apply
     // them automatically; otherwise surface a badge to review them.
-    try {
-      const pending = await getPendingRequests();
-      if (pending.length > 0) {
-        const profile = await getMyProfile();
-        const approvalRequired = profile?.settings?.approvalRequired !== false;
-        if (!approvalRequired) {
-          for (const r of pending) {
-            try {
-              await addMedicine(null, r.payload);
-              await setRequestStatus(r.id, 'approved');
-            } catch (e) {}
-          }
-          await resyncAlarmsFromCloud();
-          setPendingCount(0);
-          setPendingName(null);
-        } else {
-          setPendingCount(pending.length);
-          setPendingName(pending[0]?.payload?.name || null);
-        }
-      } else {
-        setPendingCount(0);
-        setPendingName(null);
+    if (pending.length > 0 && profile?.settings?.approvalRequired === false) {
+      for (const r of pending) {
+        try {
+          await addMedicine(null, r.payload);
+          await setRequestStatus(r.id, 'approved');
+        } catch (e) {}
       }
-    } catch (e) {
+      await resyncAlarmsFromCloud();
       setPendingCount(0);
       setPendingName(null);
+      load();
+    } else {
+      setPendingCount(pending.length);
+      setPendingName(pending[0]?.payload?.name || null);
     }
-  }, [navigation]);
+  }, [navigation, draw]);
 
   useFocusEffect(
     useCallback(() => {
@@ -194,18 +224,18 @@ export default function HomeScreen({ navigation }) {
     setRefreshing(false);
   };
 
-  // One dose, one explicit new state. Every branch writes to the same
-  // (day, medicine, slot) key.
-  const setDoseState = async (med, slot, next) => {
-    // Only today's doses can be changed. If the day turned while this screen
-    // was open, show the new day instead of writing into it.
-    if (todayKey() !== shownDay.current) {
-      load();
-      return;
-    }
+  const dismissTip = () => {
+    setShowTip(false);
+    AsyncStorage.setItem(TIP_KEY, '1').catch(() => {});
+  };
+
+  // One dose, one explicit new state, written to the (day, medicine, slot)
+  // key. Does not redraw — commit() does that, once, for any number of doses.
+  const writeDose = async (med, slot, next) => {
     if (next === 'taken') {
       await setTakenToday(user, med.id, true, slot);
-      await notifyGuardianTaken(user, med.name);
+      // The guardian's push is best-effort and never worth waiting for.
+      notifyGuardianTaken(user, med.name);
     } else if (next === 'snoozed') {
       await setTakenToday(user, med.id, false, slot);
       await recordDose(user, med.id, 'snoozed', slot);
@@ -224,45 +254,107 @@ export default function HomeScreen({ navigation }) {
       // Back to Due: undo the taken mark for this dose.
       await setTakenToday(user, med.id, false, slot);
     }
-    load();
   };
 
-  const applyToSlot = async (items, next) => {
-    for (const { med, slot, state } of items) {
-      // A dose already taken is never undone by a bulk action — reversing it
-      // has to be a deliberate choice on that one dose.
-      if (state === 'taken') continue;
-      if (state === next) continue;
-      // eslint-disable-next-line no-await-in-loop
-      await setDoseState(med, slot, next);
+  // Shows the change straight away, then saves it and re-reads today's log
+  // (one query) to confirm. It used to wait for every save, the guardian push
+  // and a full reload before anything moved — several seconds.
+  const commit = async (changes) => {
+    if (!changes.length) return;
+    // Only today's doses can be changed. If the day turned while this screen
+    // was open, show the new day instead of writing into it.
+    if (todayKey() !== shownDay.current) {
+      load();
+      return;
     }
+    const at = new Date().toISOString();
+    const entries = { ...entriesRef.current };
+    for (const { med, slot, next } of changes) {
+      const kept = (entries[med.id] || []).filter(
+        (e) => !(e.slot === slot && e.status === 'taken')
+      );
+      if (next !== 'pending') kept.push({ status: next, slot, at });
+      entries[med.id] = kept;
+    }
+    const mine = ++version.current;
+    draw(medsRef.current, entries);
+
+    try {
+      for (const { med, slot, next } of changes) {
+        // eslint-disable-next-line no-await-in-loop
+        await writeDose(med, slot, next);
+      }
+    } catch (e) {
+      Alert.alert('Could not save', 'Check your internet connection and try again.');
+      load();
+      return;
+    }
+    const fresh = await getDoseEntriesForDay(user);
+    if (mine === version.current) draw(medsRef.current, fresh);
   };
+
+  const setDoseState = (med, slot, next) => commit([{ med, slot, next }]);
+
+  const applyToSlot = (items, next) =>
+    commit(
+      items
+        // A dose already taken is never undone by a bulk action — reversing
+        // it has to be a deliberate choice on that one dose.
+        .filter(({ state }) => state !== 'taken' && state !== next)
+        .map(({ med, slot }) => ({ med, slot, next }))
+    );
 
   const takeAll = (items) => applyToSlot(items, 'taken');
   const rescheduleAll = (items) => applyToSlot(items, 'snoozed');
   const skipAll = (items) => applyToSlot(items, 'skipped');
 
-  const onMedLongPress = (med) => {
-    Alert.alert(med.name, undefined, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Edit',
-        onPress: () =>
-          navigation.navigate('AddMedicine', { medicineId: med.id }),
-      },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteMedicine(user, med.id);
-          // Its alarm may be shared with other medicines at the same time, so
-          // re-arm them all rather than leaving it ringing until next launch.
-          await resyncAlarmsFromCloud();
-          load();
+  const confirmDelete = (med) => {
+    Alert.alert(
+      `Delete ${med.name}?`,
+      'This removes the medicine, its alarms and its dose history.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteMedicine(user, med.id);
+            // Its alarm may be shared with other medicines at the same time,
+            // so re-arm them all rather than leaving it ringing.
+            await resyncAlarmsFromCloud();
+            load();
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
+
+  const onMedLongPress = (med) => setMenu({ kind: 'med', med });
+
+  const menuProps = !menu
+    ? { visible: false }
+    : menu.kind === 'med'
+    ? {
+        visible: true,
+        title: menu.med.name,
+        options: [
+          {
+            label: '✏️  Edit',
+            onPress: () => navigation.navigate('AddMedicine', { medicineId: menu.med.id }),
+          },
+          { label: '🗑  Delete', tone: 'danger', onPress: () => confirmDelete(menu.med) },
+        ],
+      }
+    : {
+        visible: true,
+        title: `${formatTime(menu.slot.time)} slot`,
+        subtitle: menu.slot.items.map((i) => i.med.name).join(', '),
+        options: [
+          { label: '✓  Mark all taken', onPress: () => takeAll(menu.slot.items) },
+          { label: '💤  Reschedule all', onPress: () => rescheduleAll(menu.slot.items) },
+          { label: '✕  Skip all', tone: 'danger', onPress: () => skipAll(menu.slot.items) },
+        ],
+      };
 
   const now = new Date();
 
@@ -327,6 +419,23 @@ export default function HomeScreen({ navigation }) {
           </Pill>
         </View>
 
+        {showTip && slots.length > 0 ? (
+          <View style={styles.tip}>
+            <Text style={styles.tipText}>
+              💡 Press and hold a medicine to edit or delete it, or a time slot to
+              mark all of it at once. Swipe a medicine left to delete.
+            </Text>
+            <TouchableOpacity
+              onPress={dismissTip}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss tip"
+            >
+              <Text style={styles.tipClose}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         {slots.length === 0 && otherDays.length === 0 && (
           <EmptyState
             icon="💊"
@@ -341,28 +450,31 @@ export default function HomeScreen({ navigation }) {
           const summary = slotSummary(slot.items);
           const folded = summary && !opened.has(slot.time);
           const tone = summary ? SUMMARY_TONE[summary.tone] : null;
-          const Header = summary ? TouchableOpacity : View;
           return (
             <View
               key={slot.time}
               style={[styles.slotCard, summary && { borderColor: tone.border }]}
             >
-              <Header
+              {/* Tap folds / unfolds a settled slot; press and hold offers
+                  the slot-wide actions for any slot. */}
+              <TouchableOpacity
+                activeOpacity={summary ? 0.7 : 1}
                 style={[
                   styles.slotHeader,
                   summary && { backgroundColor: tone.bg, borderBottomColor: tone.border },
                   folded && styles.slotHeaderFolded,
                 ]}
-                {...(summary
-                  ? {
-                      onPress: () => toggleSlot(slot.time),
-                      accessibilityRole: 'button',
-                      accessibilityState: { expanded: !folded },
-                      accessibilityLabel: `${formatTime(slot.time)} slot, ${summary.text}. ${
+                onPress={summary ? () => toggleSlot(slot.time) : undefined}
+                onLongPress={() => setMenu({ kind: 'slot', slot })}
+                accessibilityRole="button"
+                accessibilityState={summary ? { expanded: !folded } : undefined}
+                accessibilityLabel={
+                  summary
+                    ? `${formatTime(slot.time)} slot, ${summary.text}. ${
                         folded ? 'Tap to show doses' : 'Tap to fold'
-                      }`,
-                    }
-                  : {})}
+                      }`
+                    : `${formatTime(slot.time)} slot. Press and hold for options`
+                }
               >
                 <View style={styles.slotHeaderText}>
                   <Text style={styles.slotTime}>{formatTime(slot.time)} Slot</Text>
@@ -393,15 +505,19 @@ export default function HomeScreen({ navigation }) {
                     {period.label}
                   </Pill>
                 )}
-              </Header>
+              </TouchableOpacity>
 
-              {/* Status is set through the dropdown; long-press still opens
-                  the edit / delete menu, as it always has. */}
+              {/* Status is set through the dropdown; press and hold opens
+                  edit / delete, and a swipe left uncovers delete. */}
               {folded
                 ? null
                 : slot.items.map(({ med, slot: at, state }) => (
-                    <TouchableOpacity
+                    <SwipeToDelete
                       key={med.id}
+                      label={med.name}
+                      onDelete={() => confirmDelete(med)}
+                    >
+                    <TouchableOpacity
                       style={styles.doseRow}
                       activeOpacity={0.7}
                       onLongPress={() => onMedLongPress(med)}
@@ -421,6 +537,7 @@ export default function HomeScreen({ navigation }) {
                         onSelect={(next) => setDoseState(med, at, next)}
                       />
                     </TouchableOpacity>
+                    </SwipeToDelete>
                   ))}
 
               {status === 'due' && (
@@ -479,6 +596,8 @@ export default function HomeScreen({ navigation }) {
         active="Home"
         onNavigate={(route) => navigation.navigate(route)}
       />
+
+      <ActionSheet {...menuProps} onClose={() => setMenu(null)} />
     </Screen>
   );
 }
@@ -493,6 +612,18 @@ const SUMMARY_TONE = {
 
 const styles = StyleSheet.create({
   headerActions: { flexDirection: 'row', gap: 8 },
+  tip: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: 12,
+  },
+  tipText: { flex: 1, fontSize: 12.5, color: colors.body, lineHeight: 18 },
+  tipClose: { fontSize: 14, fontWeight: '800', color: colors.muted },
   content: { padding: 16, gap: 14, paddingBottom: 28 },
 
   sectionRow: {

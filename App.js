@@ -29,7 +29,7 @@ import {
 } from './src/utils/guardian';
 import { alarmMedicineIds, applyAlarmAction } from './src/utils/alarmActions';
 import { resyncAlarmsFromCloud } from './src/utils/sync';
-import { ROLES, RoleProvider, resolveRole } from './src/utils/role';
+import { ROLES, RoleProvider, resolveRole, getStoredRole } from './src/utils/role';
 import { applyUpdateIfAny } from './src/utils/updates';
 import ErrorBoundary from './src/components/ErrorBoundary';
 
@@ -46,9 +46,18 @@ export default function App() {
     (async () => {
       await ensureNotificationSetup();
       const user = await getSession();
-      const activeRole = user ? await resolveRole() : null;
+      // Open straight into the flow this phone last used, and confirm it with
+      // the server afterwards. Waiting on the network here held the splash
+      // screen up for every launch.
+      const stored = user ? await getStoredRole() : null;
+      const activeRole = user ? stored || (await resolveRole()) : null;
       setRole(activeRole);
       setBooted(true);
+      if (user && stored) {
+        resolveRole().then((fresh) => {
+          if (fresh && fresh !== stored) setRole(fresh);
+        });
+      }
 
       // Only a patient has medicines to arm alarms for or history to prune.
       if (user && activeRole !== ROLES.GUARDIAN) {

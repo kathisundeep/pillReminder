@@ -9,7 +9,7 @@ import { supabase } from './supabase';
 import {
   getSession,
   getMedicines,
-  getDoseEntries,
+  getDoseEntriesForDay,
   entriesForSlot,
   recordDose,
   hasAlertedGuardian,
@@ -198,6 +198,8 @@ export async function sweepMissedDoses() {
 
     const meds = await getMedicines(user);
     const now = new Date();
+    // The whole day's log for every medicine, in one query.
+    const dayLog = await getDoseEntriesForDay(user);
     const todayDow = now.getDay(); // 0 (Sun) .. 6 (Sat)
 
     for (const med of meds) {
@@ -211,7 +213,7 @@ export async function sweepMissedDoses() {
       if (slots.length === 0) continue; // nothing due yet today
 
       // The whole day's log for this medicine, fetched once.
-      const dayEntries = await getDoseEntries(user, med.id);
+      const dayEntries = dayLog[med.id] || [];
 
       // Every dose that has come around today, not just the most recent one.
       for (const { slot, due } of slots) {

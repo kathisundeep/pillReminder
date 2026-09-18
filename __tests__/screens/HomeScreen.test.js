@@ -442,35 +442,91 @@ describe('HomeScreen — marking doses', () => {
 });
 
 describe('HomeScreen — editing', () => {
-  it('offers Edit and Delete on long press', async () => {
+  it('offers Edit and Delete on press and hold', async () => {
     await signIn();
     await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
     const { navigation } = await show();
 
-    fireEvent(screen.getByText(/Aspirin/), 'longPress');
-    expect(Alert.alert).toHaveBeenCalledWith('Aspirin', undefined, expect.any(Array));
-
     await act(async () => {
-      await globalThis.pressAlertButton('Edit');
+      fireEvent(screen.getByText('Aspirin'), 'longPress');
     });
-    await flush();
+    expect(screen.getByText('🗑  Delete')).toBeTruthy();
+
+    await press('✏️  Edit');
     expect(navigation.navigate).toHaveBeenCalledWith('AddMedicine', {
       medicineId: db().rows('medicines')[0].id,
     });
   });
 
-  it('deletes on confirmation', async () => {
+  it('asks before deleting from the press-and-hold menu', async () => {
     await signIn();
     await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
     await show();
 
-    fireEvent(screen.getByText(/Aspirin/), 'longPress');
+    await act(async () => {
+      fireEvent(screen.getByText('Aspirin'), 'longPress');
+    });
+    await press('🗑  Delete');
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Delete Aspirin?',
+      'This removes the medicine, its alarms and its dose history.',
+      expect.any(Array)
+    );
     await act(async () => {
       await globalThis.pressAlertButton('Delete');
     });
     await flush();
 
     await waitFor(() => expect(db().rows('medicines')).toHaveLength(0));
+  });
+
+  it('deletes from the swipe button only after confirming', async () => {
+    await signIn();
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await show();
+
+    // The red button sits under the row; a swipe uncovers it.
+    await press(screen.getByLabelText('Delete Aspirin'));
+    expect(db().rows('medicines')).toHaveLength(1);
+
+    await act(async () => {
+      await globalThis.pressAlertButton('Cancel');
+    });
+    await flush();
+    expect(db().rows('medicines')).toHaveLength(1);
+
+    await press(screen.getByLabelText('Delete Aspirin'));
+    await act(async () => {
+      await globalThis.pressAlertButton('Delete');
+    });
+    await flush();
+    await waitFor(() => expect(db().rows('medicines')).toHaveLength(0));
+  });
+
+  it('marks a whole slot from press and hold on its header', async () => {
+    await signIn();
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await addMedicine(null, { name: 'Metformin', times: ['08:00'] });
+    await show();
+
+    await act(async () => {
+      fireEvent(screen.getByLabelText(/^8:00 AM slot/), 'longPress');
+    });
+    expect(screen.getByText('Aspirin, Metformin')).toBeTruthy();
+    await press('✓  Mark all taken');
+
+    expect(db().rows('dose_history').filter((r) => r.status === 'taken')).toHaveLength(2);
+    expect(screen.getByText('✓ All 2 taken')).toBeTruthy();
+  });
+
+  it('shows the gesture tip until it is dismissed', async () => {
+    await signIn();
+    await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await show();
+    expect(screen.getByText(/Press and hold a medicine/)).toBeTruthy();
+
+    await press(screen.getByLabelText('Dismiss tip'));
+    expect(screen.queryByText(/Press and hold a medicine/)).toBeNull();
   });
 
   it('opens the editor for a medicine listed under Other days', async () => {

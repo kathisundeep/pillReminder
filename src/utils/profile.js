@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, localUser } from './supabase';
 import { addReading } from './health';
 
 // The user's own details: who they are, not what they take.
@@ -59,7 +59,7 @@ export function dateOfBirthError(raw) {
 }
 
 export async function getMyDetails() {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return null;
   const { data } = await supabase
     .from('profiles')
@@ -80,7 +80,7 @@ export async function needsOnboarding() {
 }
 
 export async function updateMyDetails(patch) {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return { ok: false, error: 'not signed in' };
 
   const heightProblem = heightError(patch.height_cm);
@@ -112,7 +112,7 @@ export async function updateMyDetails(patch) {
 
 // Completing or skipping both count: the point is never to ask twice.
 export async function markOnboarded() {
-  const { data: u } = await supabase.auth.getUser();
+  const { data: u } = await localUser();
   if (!u?.user) return { ok: false };
   const { error } = await supabase
     .from('profiles')
