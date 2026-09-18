@@ -35,11 +35,14 @@ import { colors, radius } from '../theme';
 // date sits on every cell and tapping one spells the day out dose by dose.
 
 // Segment colours for a bar, and badge colours + words for a dose.
+// Strong enough to read at a glance on a small cell; a time still to come is
+// left white ("not yet"), and a part of the day with nothing scheduled is a
+// faint grey so the three bars are always visible.
 const BAR = {
-  [DOSE.TAKEN]: '#d1fae5',
-  [DOSE.MISSED]: '#fee2e2',
-  [DOSE.SNOOZED]: '#e0f2fe',
-  [DOSE.DUE]: '#fef3c7',
+  [DOSE.TAKEN]: '#4ade80',
+  [DOSE.MISSED]: '#f87171',
+  [DOSE.SNOOZED]: '#60a5fa',
+  [DOSE.DUE]: '#fbbf24',
   [DOSE.FUTURE]: '#ffffff',
   none: '#f1f5f9',
 };
@@ -57,6 +60,7 @@ const LEGEND = [
   [DOSE.MISSED, 'Missed'],
   [DOSE.SNOOZED, 'Snoozed'],
   [DOSE.DUE, 'Due'],
+  [DOSE.FUTURE, 'Not yet'],
   ['none', 'Nothing due'],
 ];
 
@@ -390,16 +394,19 @@ const styles = StyleSheet.create({
   },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   cellWrap: { width: `${100 / 7}%`, padding: 3 },
+  // The cell's own colour shows through the gaps, drawing the lines that
+  // split a day into morning / afternoon / night.
   cell: {
     aspectRatio: 1,
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#cbd5e1',
     overflow: 'hidden',
+    gap: 2,
   },
-  cellSelected: { borderColor: colors.heading, borderWidth: 2 },
-  bar: { flex: 1, borderBottomWidth: 0.5, borderBottomColor: 'rgba(0,0,0,0.04)' },
+  cellSelected: { borderColor: colors.heading, borderWidth: 2, backgroundColor: colors.heading },
+  bar: { flex: 1 },
   cellNum: {
     position: 'absolute',
     top: 2,

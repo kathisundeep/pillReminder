@@ -71,7 +71,15 @@ function dayString(date) {
 // "take it for 7 days" means the seventh day counts.
 export function isWithinCourse(med, now = new Date()) {
   const today = dayString(now);
-  if (med?.startDate && today < med.startDate) return false;
+  // A course starts no later than the day the medicine was added. The
+  // start_date migration stamped the day it ran on every existing medicine,
+  // which would otherwise hide all of their earlier history.
+  let start = med?.startDate || null;
+  if (start && med?.createdAt) {
+    const added = dayString(med.createdAt);
+    if (added < start) start = added;
+  }
+  if (start && today < start) return false;
   if (med?.endDate && today > med.endDate) return false;
   return true;
 }

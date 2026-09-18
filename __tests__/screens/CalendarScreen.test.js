@@ -54,9 +54,9 @@ describe('CalendarScreen', () => {
     dose(user, id, '2026-08-03', '20:00', 'taken');
     await showScreen(CalendarScreen);
 
-    expect(barColour('2026-08-03', 'morning')).toBe('#fee2e2');
+    expect(barColour('2026-08-03', 'morning')).toBe('#f87171');
     expect(barColour('2026-08-03', 'afternoon')).toBe('#f1f5f9');
-    expect(barColour('2026-08-03', 'night')).toBe('#d1fae5');
+    expect(barColour('2026-08-03', 'night')).toBe('#4ade80');
   });
 
   it('does not show today`s evening dose as missed in the morning', async () => {
@@ -64,16 +64,52 @@ describe('CalendarScreen', () => {
     dose(user, id, '2026-08-05', '08:00', 'taken', '2026-08-05T08:02:00');
     await showScreen(CalendarScreen);
 
-    expect(barColour('2026-08-05', 'morning')).toBe('#d1fae5');
+    expect(barColour('2026-08-05', 'morning')).toBe('#4ade80');
     expect(barColour('2026-08-05', 'night')).toBe('#ffffff');
   });
+
+  // The fake database stamps rows in 2024; give them their real added day.
+  const addedOn = (day) => {
+    for (const r of db().rows('medicines')) r.created_at = `${day}T06:00:00.000Z`;
+  };
 
   it('shows nothing due before the medicine started', async () => {
     await signIn();
     await addMedicine(null, { name: 'Metformin', times: ['08:00'], startDate: '2026-08-03' });
+    addedOn('2026-08-03');
     await showScreen(CalendarScreen);
     expect(barColour('2026-08-02', 'morning')).toBe('#f1f5f9');
-    expect(barColour('2026-08-03', 'morning')).toBe('#fee2e2');
+    expect(barColour('2026-08-03', 'morning')).toBe('#f87171');
+  });
+
+  // The start_date migration stamped its own run day on existing medicines;
+  // their history from the day they were added must still show.
+  it('counts from the day a medicine was added when that is earlier', async () => {
+    const user = await signIn();
+    const id = await addMedicine(null, { name: 'Metformin', times: ['08:00'], startDate: '2026-08-05' });
+    addedOn('2026-08-02');
+    dose(user, id, '2026-08-03', '08:00', 'taken');
+    await showScreen(CalendarScreen);
+
+    expect(barColour('2026-08-01', 'morning')).toBe('#f1f5f9');
+    expect(barColour('2026-08-02', 'morning')).toBe('#f87171');
+    expect(barColour('2026-08-03', 'morning')).toBe('#4ade80');
+  });
+
+  // The reported case: morning taken, afternoon missed, night still to come.
+  it('shows green / red / blank for taken, missed and not-yet', async () => {
+    jest.setSystemTime(new Date(2026, 7, 5, 14, 0, 0, 0)); // 2 PM
+    const user = await signIn();
+    const id = await addMedicine(null, {
+      name: 'A', times: ['09:00', '12:00', '20:00'], startDate: '2026-08-05',
+    });
+    addedOn('2026-08-05');
+    dose(user, id, '2026-08-05', '09:00', 'taken', '2026-08-05T09:05:00');
+    await showScreen(CalendarScreen);
+
+    expect(barColour('2026-08-05', 'morning')).toBe('#4ade80');
+    expect(barColour('2026-08-05', 'afternoon')).toBe('#f87171');
+    expect(barColour('2026-08-05', 'night')).toBe('#ffffff');
   });
 
   it('spells out a tapped day dose by dose', async () => {
