@@ -30,10 +30,21 @@ import {
 export const SWEEP_TASK = 'guardian-missed-dose-sweep';
 const EXPO_PUSH_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
 
+// Why the last registerForPushTokenAsync() came back empty, in words a user
+// can act on — or null once a token is issued and saved. Registration used to
+// fail silently, which left a guardian believing alerts would reach them.
+let lastPushError = null;
+export function getPushRegistrationError() {
+  return lastPushError;
+}
+
 // Register this device for Expo push so it can act as a guardian.
 // Returns the ExponentPushToken[...] string, or null if unavailable.
 export async function registerForPushTokenAsync() {
-  if (!Device.isDevice) return null;
+  if (!Device.isDevice) {
+    lastPushError = 'Push alerts need a real phone, not an emulator.';
+    return null;
+  }
   try {
     const { status: existing } = await Notifications.getPermissionsAsync();
     let status = existing;
@@ -41,7 +52,11 @@ export async function registerForPushTokenAsync() {
       const req = await Notifications.requestPermissionsAsync();
       status = req.status;
     }
-    if (status !== 'granted') return null;
+    if (status !== 'granted') {
+      lastPushError =
+        'Notifications are turned off for PillReminder. Allow them in the phone settings.';
+      return null;
+    }
 
     const projectId =
       Constants?.expoConfig?.extra?.eas?.projectId ??
@@ -50,15 +65,23 @@ export async function registerForPushTokenAsync() {
       projectId ? { projectId } : undefined
     );
     const token = resp?.data || null;
-    if (token) {
-      await setOwnPushToken(token);
-      // Also store on the cloud profile so a paired guardian can be reached.
-      try {
-        await saveMyPushToken(token);
-      } catch (e) {}
+    if (!token) {
+      lastPushError = 'This phone could not get a push address.';
+      return null;
     }
+    await setOwnPushToken(token);
+    // Also store on the cloud profile so a paired guardian can be reached.
+    try {
+      await saveMyPushToken(token);
+    } catch (e) {
+      lastPushError = 'Could not save this phone for alerts. Check the internet connection.';
+      return token;
+    }
+    lastPushError = null;
     return token;
   } catch (e) {
+    // On Android this is almost always a build without Firebase (FCM) set up.
+    lastPushError = `This phone cannot receive push alerts: ${e?.message || e}`;
     return null;
   }
 }

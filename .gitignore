@@ -16,3 +16,6 @@ ios/
 
 # Test coverage output
 coverage/
+
+# Firebase service-account keys are secrets (uploaded to EAS, never committed)
+*firebase-adminsdk*.json

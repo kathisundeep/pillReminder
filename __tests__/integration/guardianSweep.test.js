@@ -11,6 +11,7 @@ import {
   notifyGuardianTaken,
   sendPush,
   registerForPushTokenAsync,
+  getPushRegistrationError,
   registerBackgroundSweep,
 } from '../../src/utils/guardian';
 import {
@@ -503,6 +504,18 @@ describe('registerForPushTokenAsync', () => {
   it('returns null instead of throwing when token issuance fails', async () => {
     Notifications.__state.pushTokenError = new Error('no network');
     expect(await registerForPushTokenAsync()).toBeNull();
+    expect(getPushRegistrationError()).toMatch(/no network/);
+  });
+
+  it('explains a refused permission, and clears the reason once a token is issued', async () => {
+    Notifications.__state.permission = 'denied';
+    await registerForPushTokenAsync();
+    expect(getPushRegistrationError()).toMatch(/turned off/);
+
+    Notifications.__state.permission = 'granted';
+    db().as(db().makeUser('bob'));
+    await registerForPushTokenAsync();
+    expect(getPushRegistrationError()).toBeNull();
   });
 });
 

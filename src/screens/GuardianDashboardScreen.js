@@ -4,6 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getSession, logoutUser } from '../utils/storage';
 import { clearStoredRole, useRole } from '../utils/role';
 import { getLinkedUsers, pairWithCode } from '../utils/guardianCloud';
+import { registerForPushTokenAsync, getPushRegistrationError } from '../utils/guardian';
 import {
   Screen,
   Content,
@@ -28,13 +29,22 @@ export default function GuardianDashboardScreen({ navigation }) {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [pushProblem, setPushProblem] = useState(null);
+
+  // A guardian who cannot receive pushes misses every alert without knowing,
+  // so re-check on each visit and say so on screen.
+  const checkPush = useCallback(async () => {
+    const token = await registerForPushTokenAsync();
+    setPushProblem(token ? null : getPushRegistrationError());
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setMe(await getSession());
     setUsers(await getLinkedUsers());
     setLoading(false);
-  }, []);
+    checkPush();
+  }, [checkPush]);
 
   useFocusEffect(
     useCallback(() => {
@@ -76,6 +86,14 @@ export default function GuardianDashboardScreen({ navigation }) {
       />
 
       <Content>
+        {pushProblem ? (
+          <Card style={styles.pushWarning}>
+            <CardTitle>⚠️ You will not get alerts</CardTitle>
+            <CardSubtitle>{pushProblem}</CardSubtitle>
+            <Button title="Try again" variant="neutral" onPress={checkPush} />
+          </Card>
+        ) : null}
+
         <Card>
           <CardTitle>Link a person</CardTitle>
           <CardSubtitle>
@@ -181,6 +199,7 @@ export default function GuardianDashboardScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
+  pushWarning: { borderWidth: 1, borderColor: colors.danger },
   codeInput: { letterSpacing: 6, fontWeight: '800', textAlign: 'center' },
   listLabel: {
     fontSize: 12,
