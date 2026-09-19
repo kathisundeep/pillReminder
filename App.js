@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AppState, Alert } from 'react-native';
+import { AppState, Alert, Linking } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Notifications from 'expo-notifications';
@@ -28,7 +28,8 @@ import {
   registerBackgroundSweep,
   sweepMissedDoses,
 } from './src/utils/guardian';
-import { alarmMedicineIds, applyAlarmAction } from './src/utils/alarmActions';
+import { alarmMedicineIds, applyAlarmAction, parseAlarmUrl } from './src/utils/alarmActions';
+import { dismissAlarm } from './modules/ringtones';
 import { resyncAlarmsFromCloud } from './src/utils/sync';
 import {
   ROLES,
@@ -49,6 +50,44 @@ export default function App() {
   // landing screen but which screens exist at all.
   const [role, setRole] = useState(null);
   const navRef = useRef(null);
+  const navReady = useRef(false);
+  const pendingAlarmUrl = useRef(null);
+
+  // Each role registers a different set of screens, so a route that exists in
+  // one flow is genuinely absent in the other. Navigating to a missing route
+  // throws, so check before moving.
+  const go = (name, params) => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const routes = nav.getRootState?.()?.routeNames || [];
+    if (routes.includes(name)) nav.navigate(name, params);
+  };
+
+  // A native alarm's link: an answer from its buttons (applied to every
+  // medicine it carries), or a tap that opens the alarm screen.
+  const handleAlarmUrl = async (url) => {
+    const alarm = parseAlarmUrl(url);
+    if (!alarm) return;
+    const { data, action, nid } = alarm;
+    if (['TAKEN', 'RESCHEDULE', 'SKIP'].includes(action)) {
+      dismissAlarm(nid); // stops the ringing
+      await applyAlarmAction(await getSession(), action, data);
+      go('Home');
+    } else {
+      go('Alarm', {
+        medicineIds: alarmMedicineIds(data),
+        slot: data.slot ?? null,
+        nativeNid: nid,
+      });
+    }
+  };
+
+  const flushPendingAlarm = () => {
+    if (!navReady.current || !pendingAlarmUrl.current) return;
+    const url = pendingAlarmUrl.current;
+    pendingAlarmUrl.current = null;
+    handleAlarmUrl(url);
+  };
 
   // One phone per guardian account. If another phone has signed in to it,
   // sign out here — the server has already stopped sending this phone the
@@ -72,7 +111,7 @@ export default function App() {
     const timer = setInterval(check, 60000);
     return () => {
       stopped = true;
-      sub.remove();
+      sub?.remove?.();
       clearInterval(timer);
     };
   }, [role]);
@@ -118,15 +157,17 @@ export default function App() {
       applyUpdateIfAny();
     });
 
-    // Each role registers a different set of screens, so a route that exists in
-    // one flow is genuinely absent in the other. Navigating to a missing route
-    // throws, so check before moving.
-    const go = (name, params) => {
-      const nav = navRef.current;
-      if (!nav) return;
-      const routes = nav.getRootState?.()?.routeNames || [];
-      if (routes.includes(name)) nav.navigate(name, params);
-    };
+    // Native alarms (Android) open the app with a link rather than a
+    // notification response. One that arrives before navigation is ready —
+    // a cold start from the alarm — waits for onReady.
+    const linkSub = Linking.addEventListener('url', ({ url }) => handleAlarmUrl(url));
+    Linking.getInitialURL()
+      .then((url) => {
+        if (!url) return;
+        pendingAlarmUrl.current = url;
+        flushPendingAlarm();
+      })
+      .catch(() => {});
 
     const receivedSub = Notifications.addNotificationReceivedListener(
       (notification) => {
@@ -179,6 +220,7 @@ export default function App() {
       receivedSub.remove();
       responseSub.remove();
       appStateSub.remove();
+      linkSub?.remove?.();
     };
   }, []);
 
@@ -189,7 +231,13 @@ export default function App() {
   return (
     <ErrorBoundary>
       <RoleProvider value={{ role, setRole }}>
-        <NavigationContainer ref={navRef}>
+        <NavigationContainer
+          ref={navRef}
+          onReady={() => {
+            navReady.current = true;
+            flushPendingAlarm();
+          }}
+        >
         <StatusBar style="light" />
         <Stack.Navigator
           screenOptions={{

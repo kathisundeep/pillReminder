@@ -17,25 +17,11 @@ import {
   deleteMedicine,
 } from '../utils/storage';
 import { resyncAlarms, ensureNotificationSetup } from '../utils/notifications';
-import { Audio } from 'expo-av';
 import MedicineDraftCard from '../components/MedicineDraftCard';
 import { createAddMedicineRequest } from '../utils/guardianCloud';
 import { notifyPatientOfRequest } from '../utils/guardian';
-import {
-  listSoundOptions,
-  canUseDeviceSounds,
-  rememberDeviceSound,
-} from '../utils/sounds';
 import { todayISO, addDaysISO, durationOf } from '../utils/course';
 import { colors as theme } from '../theme';
-
-const TONE_SOURCES = {
-  alarm: require('../../assets/sounds/alarm.wav'),
-  chime: require('../../assets/sounds/chime.wav'),
-  bell: require('../../assets/sounds/bell.wav'),
-  siren: require('../../assets/sounds/siren.wav'),
-  gentle: require('../../assets/sounds/gentle.wav'),
-};
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
 
@@ -75,9 +61,6 @@ export default function AddMedicineScreen({ route, navigation }) {
   const [snoozeMinutes, setSnoozeMinutes] = useState(10);
   const [toneId, setToneId] = useState('classic');
   const [alertGuardian, setAlertGuardian] = useState(true);
-  const [soundOptions] = useState(() => listSoundOptions());
-  const [deviceSoundsAvailable] = useState(() => canUseDeviceSounds());
-  const previewRef = React.useRef(null);
   const [busy, setBusy] = useState(false);
   // Opening a card (a new one, or a folded one tapped) scrolls it into view:
   // the card above folds as this one opens, which otherwise leaves the screen
@@ -150,50 +133,6 @@ export default function AddMedicineScreen({ route, navigation }) {
     setDrafts(rest);
     if (activeKey === key) setOpenKey(rest[rest.length - 1]?.key || null);
   };
-
-  const previewTone = async (tone) => {
-    setToneId(tone.id);
-    // A device sound has to be remembered before it can be scheduled: the
-    // medicine stores only the id, so the id -> uri mapping must survive.
-    if (tone.kind === 'device') {
-      await rememberDeviceSound({ uri: tone.uri, title: tone.title });
-    }
-    try {
-      if (previewRef.current) {
-        await previewRef.current.unloadAsync();
-        previewRef.current = null;
-      }
-      // Bundled tones are require()d assets; device sounds are content:// URIs,
-      // which expo-av plays directly on Android.
-      const source = tone.kind === 'device'
-        ? { uri: tone.uri }
-        : TONE_SOURCES[tone.sound];
-      const { sound } = await Audio.Sound.createAsync(source, {
-        shouldPlay: true,
-        volume: 1.0,
-      });
-      previewRef.current = sound;
-      // Auto-stop the preview after a couple of seconds.
-      setTimeout(async () => {
-        try {
-          if (previewRef.current === sound) {
-            await sound.stopAsync();
-            await sound.unloadAsync();
-            previewRef.current = null;
-          }
-        } catch (e) {}
-      }, 2500);
-    } catch (e) {}
-  };
-
-  useEffect(() => {
-    return () => {
-      if (previewRef.current) {
-        previewRef.current.unloadAsync().catch(() => {});
-        previewRef.current = null;
-      }
-    };
-  }, []);
 
   // Stops at the first card that is not ready, opens it, and says what is
   // missing — by name, since there may be several.
@@ -373,45 +312,6 @@ export default function AddMedicineScreen({ route, navigation }) {
       {batch && drafts.length > 1 ? (
         <Text style={styles.sharedTitle}>For all {drafts.length} medicines</Text>
       ) : null}
-
-      <Text style={styles.label}>Alarm tone</Text>
-      <Text style={styles.nameHint}>
-        {deviceSoundsAvailable
-          ? "Tap to preview and select. Your phone's own alarms and ringtones are listed below the app's."
-          : 'Tap a tone to preview and select it.'}
-      </Text>
-      {soundOptions.map((tone, index) => {
-        const selected = toneId === tone.id;
-        // One divider where the app's own tones end and the phone's begin,
-        // so a long ringtone list does not read as more app tones.
-        const startsDeviceSection =
-          tone.kind === 'device' && soundOptions[index - 1]?.kind !== 'device';
-        return (
-          <React.Fragment key={tone.id}>
-            {startsDeviceSection ? (
-              <Text style={styles.toneSectionLabel}>Sounds on this phone</Text>
-            ) : null}
-            <TouchableOpacity
-              style={[styles.toneOption, selected && styles.toneOptionOn]}
-              onPress={() => previewTone(tone)}
-            >
-              <View style={[styles.toneRadio, selected && styles.toneRadioOn]}>
-                {selected && <View style={styles.toneRadioDot} />}
-              </View>
-              <Text
-                style={[styles.toneLabel, selected && styles.toneLabelOn]}
-                numberOfLines={1}
-              >
-                {tone.title}
-              </Text>
-              {tone.type && tone.type !== 'alarm' ? (
-                <Text style={styles.toneType}>{tone.type}</Text>
-              ) : null}
-              <Text style={styles.tonePlay}>▶</Text>
-            </TouchableOpacity>
-          </React.Fragment>
-        );
-      })}
 
       <Text style={styles.label}>Snooze duration</Text>
       <View style={styles.snoozeRow}>

@@ -5,6 +5,7 @@ import * as Notifications from 'expo-notifications';
 import * as KeepAwake from 'expo-keep-awake';
 import { renderScreen, showScreen, press, flush } from '../../test/renderScreen';
 import AlarmScreen from '../../src/screens/AlarmScreen';
+import * as Ringtones from '../../modules/ringtones';
 import {
   registerUser,
   loginUser,
@@ -363,5 +364,53 @@ describe('AlarmScreen — several medicines at once', () => {
 
     expect(history().filter((r) => r.status === 'taken')).toHaveLength(2);
     expect(navigation.replace).toHaveBeenCalledWith('Home');
+  });
+});
+
+describe('AlarmScreen — opened by a native alarm', () => {
+  beforeEach(() => {
+    Ringtones.__state.alarms.available = true;
+  });
+
+  it('silences the ringing notification, since the screen rings now', async () => {
+    await signIn();
+    const id = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await showScreen(AlarmScreen, { params: { medicineIds: [id], slot: '08:00', nativeNid: 77 } });
+    expect(Ringtones.dismissAlarm).toHaveBeenCalledWith(77);
+  });
+
+  it('plays the tone chosen in the phone`s settings', async () => {
+    await signIn();
+    const id = await addMedicine(null, { name: 'Aspirin', times: ['08:00'], toneId: 'bell' });
+    await showScreen(AlarmScreen, { params: { medicineIds: [id], slot: '08:00' } });
+    expect(Av.__state.created[0].source).toEqual({ uri: 'content://settings/system/alarm_alert' });
+  });
+
+  it('rings for one minute, then goes quiet while staying on screen', async () => {
+    await signIn();
+    const id = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    await showScreen(AlarmScreen, { params: { medicineIds: [id], slot: '08:00' } });
+    const { sound } = Av.__state.created[0];
+
+    await act(async () => {
+      jest.advanceTimersByTime(59000);
+    });
+    expect(sound.stopAsync).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+    });
+    await flush();
+    expect(sound.stopAsync).toHaveBeenCalled();
+    expect(Vibration.cancel).toHaveBeenCalled();
+    expect(screen.getByText('Aspirin')).toBeTruthy();
+  });
+
+  it('stops showing over the lock screen once it closes', async () => {
+    await signIn();
+    const id = await addMedicine(null, { name: 'Aspirin', times: ['08:00'] });
+    const { unmount } = await showScreen(AlarmScreen, { params: { medicineIds: [id], slot: '08:00' } });
+    unmount();
+    expect(Ringtones.releaseLockScreen).toHaveBeenCalled();
   });
 });

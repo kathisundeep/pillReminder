@@ -372,68 +372,31 @@ describe('AddMedicineScreen — times', () => {
 describe('AddMedicineScreen — alarm tone', () => {
   beforeEach(async () => {
     await signIn();
-    await showScreen(AddMedicineScreen);
   });
 
-  it('lists every bundled tone', async () => {
+  // The tone is chosen in the phone's own notification settings now
+  // (Settings → Medicine alarm), not per medicine.
+  it('no longer offers a tone picker', async () => {
+    await showScreen(AddMedicineScreen);
+    expect(screen.queryByText('Alarm tone')).toBeNull();
     for (const label of ['Classic', 'Chime', 'Bell', 'Siren', 'Gentle']) {
-      expect(screen.getByText(label)).toBeTruthy();
+      expect(screen.queryByText(label)).toBeNull();
     }
   });
 
-  it('plays a preview when a tone is tapped', async () => {
-    await press('Siren');
-    expect(Av.Audio.Sound.createAsync).toHaveBeenCalledTimes(1);
-    expect(Av.__state.created[0].opts).toMatchObject({ shouldPlay: true });
-  });
-
-  it('selecting a tone stores it on the medicine', async () => {
-    await press('Bell');
+  it('saves the default tone on a new medicine', async () => {
+    await showScreen(AddMedicineScreen);
     await addName('Aspirin');
     await press('Once');
+    await press('Save');
+    expect(meds()[0].tone_id).toBe('classic');
+  });
+
+  it('keeps an existing medicine`s tone when it is edited', async () => {
+    const id = await addMedicine(null, { name: 'Aspirin', times: ['08:00'], toneId: 'bell' });
+    await showScreen(AddMedicineScreen, { params: { medicineId: id } });
     await press('Save');
     expect(meds()[0].tone_id).toBe('bell');
-  });
-
-  it('stops the previous preview before starting a new one', async () => {
-    await press('Chime');
-    const firstSound = Av.__state.created[0].sound;
-    await press('Siren');
-    expect(firstSound.unloadAsync).toHaveBeenCalled();
-  });
-
-  it('auto-stops a preview after a couple of seconds', async () => {
-    await press('Chime');
-    const { sound } = Av.__state.created[0];
-    await act(async () => {
-      jest.advanceTimersByTime(3000);
-    });
-    await flush();
-    expect(sound.stopAsync).toHaveBeenCalled();
-    expect(sound.unloadAsync).toHaveBeenCalled();
-  });
-
-  it('survives an audio failure without breaking selection', async () => {
-    Av.__state.failCreate = true;
-    await press('Siren');
-    await addName('Aspirin');
-    await press('Once');
-    await press('Save');
-    expect(meds()[0].tone_id).toBe('siren');
-  });
-
-  it('every tone can be selected and round-trips to the row', async () => {
-    for (const [label, id] of [
-      ['Classic', 'classic'], ['Chime', 'chime'], ['Bell', 'bell'],
-      ['Siren', 'siren'], ['Gentle', 'gentle'],
-    ]) {
-      // eslint-disable-next-line no-await-in-loop
-      await press(label);
-      // eslint-disable-next-line no-await-in-loop
-      await flush(2);
-      expect(screen.getByText(label)).toBeTruthy();
-      expect(id).toBeTruthy();
-    }
   });
 });
 

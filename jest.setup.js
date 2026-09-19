@@ -405,6 +405,13 @@ jest.mock('./modules/ringtones', () => {
     ],
     channels: {},
     throwOnList: false,
+    alarms: {
+      available: false,
+      repeating: [],
+      oneShots: [],
+      dismissed: [],
+      fullScreen: true,
+    },
   };
   return {
     __state: state,
@@ -427,5 +434,36 @@ jest.mock('./modules/ringtones', () => {
     importSound: jest.fn(async (uri, name) => `${name}.caf`),
     listImportedSounds: jest.fn(() => []),
     deleteImportedSound: jest.fn(() => true),
+
+    // Native alarms (PillAlarms). Off by default, as on an older APK or iOS;
+    // tests of the native path switch state.alarms.available on.
+    get hasNativeAlarms() { return state.alarms.available; },
+    setRepeatingAlarms: jest.fn((list) => {
+      state.alarms.repeating = list;
+      return list.length;
+    }),
+    addOneShotAlarm: jest.fn((a) => {
+      state.alarms.oneShots.push(a);
+      return a.id;
+    }),
+    cancelAllAlarms: jest.fn(() => {
+      state.alarms.repeating = [];
+      state.alarms.oneShots = [];
+    }),
+    dismissAlarm: jest.fn((nid) => {
+      state.alarms.dismissed.push(Number(nid));
+    }),
+    setFullScreenAlarms: jest.fn((on) => {
+      state.alarms.fullScreen = !!on;
+    }),
+    getFullScreenAlarms: jest.fn(() => state.alarms.fullScreen),
+    canUseFullScreenAlarms: jest.fn(() => true),
+    openFullScreenSettings: jest.fn(),
+    openAlarmSoundSettings: jest.fn(),
+    getAlarmSoundTitle: jest.fn(() => (state.alarms.available ? 'Oxygen' : null)),
+    getAlarmSoundUri: jest.fn(() =>
+      state.alarms.available ? 'content://settings/system/alarm_alert' : null
+    ),
+    releaseLockScreen: jest.fn(),
   };
 });

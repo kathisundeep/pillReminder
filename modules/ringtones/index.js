@@ -86,3 +86,78 @@ export function deleteImportedSound(name) {
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Medicine alarms rung by the phone itself (Android): AlarmManager at the
+// exact time, a notification whose sound — chosen by the user in the phone's
+// own notification settings — repeats for a minute, and optionally a
+// full-screen alarm over the lock screen.
+//
+// Optional for the same reason as above: an APK built before this existed, and
+// iOS, get `hasNativeAlarms === false` and keep scheduling through
+// expo-notifications.
+const PillAlarms = requireOptionalNativeModule('PillAlarms');
+
+export const hasNativeAlarms = PillAlarms != null;
+
+function call(name, ...args) {
+  if (!PillAlarms?.[name]) return null;
+  try {
+    return PillAlarms[name](...args);
+  } catch (e) {
+    return null;
+  }
+}
+
+// [{ id, hour, minute, weekday (0 = daily, 1..7 = Sun..Sat), title, body, data }]
+export function setRepeatingAlarms(alarms) {
+  return call('setRepeatingAlarms', JSON.stringify(alarms || []));
+}
+
+// { id, oneShotAt (epoch ms), title, body, data }
+export function addOneShotAlarm(alarm) {
+  return call('addOneShot', JSON.stringify(alarm));
+}
+
+export function cancelAllAlarms() {
+  return call('cancelAll');
+}
+
+export function dismissAlarm(nid) {
+  const n = Number(nid);
+  return Number.isFinite(n) ? call('dismiss', n) : null;
+}
+
+export function setFullScreenAlarms(on) {
+  return call('setFullScreen', !!on);
+}
+
+export function getFullScreenAlarms() {
+  const v = call('getFullScreen');
+  return v == null ? true : !!v;
+}
+
+export function canUseFullScreenAlarms() {
+  const v = call('canUseFullScreen');
+  return v == null ? true : !!v;
+}
+
+export function openFullScreenSettings() {
+  return call('openFullScreenSettings');
+}
+
+export function openAlarmSoundSettings() {
+  return call('openSoundSettings');
+}
+
+export function getAlarmSoundTitle() {
+  return call('getSoundTitle');
+}
+
+export function getAlarmSoundUri() {
+  return call('getSoundUri');
+}
+
+export function releaseLockScreen() {
+  return call('releaseLockScreen');
+}

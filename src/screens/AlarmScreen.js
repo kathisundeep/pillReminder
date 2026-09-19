@@ -15,6 +15,15 @@ import MedThumb from '../components/MedThumb';
 import { Button } from '../components/ui';
 import { holdUpdates } from '../utils/updates';
 import { resolveSound } from '../utils/sounds';
+import {
+  hasNativeAlarms,
+  getAlarmSoundUri,
+  dismissAlarm,
+  releaseLockScreen,
+} from '../../modules/ringtones';
+
+// An unanswered alarm rings for one minute, then goes quiet.
+const RING_MS = 60000;
 import { colors, radius, formFor } from '../theme';
 
 const TONE_SOURCES = {
@@ -32,7 +41,7 @@ const ALARM_PATTERN = [0, 800, 400, 800, 400, 800];
 // Skip. The screen closes once every one of them has an answer.
 export default function AlarmScreen({ route, navigation }) {
   const params = route.params || {};
-  const { slot = null, notificationId = null } = params;
+  const { slot = null, notificationId = null, nativeNid = null } = params;
   const soundRef = useRef(null);
   // Shown straight away from what the notification carried, then filled in
   // (photo, form, colour, snooze time) once the medicines load.
@@ -48,6 +57,18 @@ export default function AlarmScreen({ route, navigation }) {
 
     activateKeepAwakeAsync('alarm');
     Vibration.vibrate(ALARM_PATTERN, true);
+
+    // Opened from a ringing native alarm: this screen rings now, so silence
+    // the notification rather than play two sounds at once.
+    if (nativeNid != null) dismissAlarm(nativeNid);
+
+    // A minute of ringing, then quiet — the screen stays until answered.
+    const ringTimer = setTimeout(() => {
+      Vibration.cancel();
+      const s0 = soundRef.current;
+      soundRef.current = null;
+      if (s0) s0.stopAsync().then(() => s0.unloadAsync()).catch(() => {});
+    }, RING_MS);
 
     (async () => {
       try {
@@ -76,10 +97,17 @@ export default function AlarmScreen({ route, navigation }) {
               // required asset; resolveSound falls back to a bundled tone if
               // the chosen sound has gone — silence is the one outcome an
               // alarm cannot have.
-              const chosen = await resolveSound(found[0]?.toneId);
-              source = chosen.uri
-                ? { uri: chosen.uri }
-                : TONE_SOURCES[chosen.sound] || TONE_SOURCES.alarm;
+              if (hasNativeAlarms) {
+                // The tone the user chose for "Medicine alarms" in the
+                // phone's settings — the same one the notification rang.
+                const uri = getAlarmSoundUri();
+                if (uri) source = { uri };
+              } else {
+                const chosen = await resolveSound(found[0]?.toneId);
+                source = chosen.uri
+                  ? { uri: chosen.uri }
+                  : TONE_SOURCES[chosen.sound] || TONE_SOURCES.alarm;
+              }
             }
           } catch (e) {}
         }
@@ -111,7 +139,10 @@ export default function AlarmScreen({ route, navigation }) {
 
     return () => {
       cancelled = true;
+      clearTimeout(ringTimer);
       releaseUpdateHold();
+      // Opened over the lock screen by an alarm; stop showing there.
+      releaseLockScreen();
       Vibration.cancel();
       deactivateKeepAwake('alarm');
       (async () => {

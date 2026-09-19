@@ -1,0 +1,33 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!--
+    Needed only on Android 13+ and only to see ringtones the USER added to the
+    device. The built-in system sounds are readable without it, so the picker
+    degrades to the stock list rather than to an empty one if it is refused.
+  -->
+  <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+  <!-- Medicine alarms, rung by the phone (AlarmScheduler / AlarmReceiver). -->
+  <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+  <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.VIBRATE" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+  <application>
+    <receiver
+      android:name="expo.modules.ringtones.AlarmReceiver"
+      android:exported="false" />
+    <receiver
+      android:name="expo.modules.ringtones.AlarmBootReceiver"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        <action android:name="android.intent.action.TIME_SET" />
+        <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+      </intent-filter>
+    </receiver>
+  </application>
+</manifest>

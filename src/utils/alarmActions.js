@@ -62,3 +62,32 @@ export async function applyAlarmAction(user, action, data) {
   const meds = await stillPending(user, await medicinesForAlarm(alarmMedicineIds(data)), data.slot ?? null);
   await run(user, meds, data.slot ?? null);
 }
+
+// A native alarm opens the app with its details in a link:
+//   pillreminder://alarm?alarmId=…&nid=…&data=<json>[&action=TAKEN]
+// Returns { alarmId, nid, action, data } or null for any other link.
+export function parseAlarmUrl(url) {
+  const m = /^pillreminder:\/\/alarm\/?\?(.*)$/.exec(String(url || ''));
+  if (!m) return null;
+  const params = {};
+  for (const part of m[1].split('&')) {
+    const [k, v = ''] = part.split('=');
+    try {
+      params[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' '));
+    } catch (e) {
+      params[k] = v;
+    }
+  }
+  let data = {};
+  try {
+    data = JSON.parse(params.data || '{}');
+  } catch (e) {
+    data = {};
+  }
+  return {
+    alarmId: params.alarmId || null,
+    nid: params.nid != null && params.nid !== '' ? Number(params.nid) : null,
+    action: params.action || null,
+    data,
+  };
+}

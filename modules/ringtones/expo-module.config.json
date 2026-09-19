@@ -1,9 +1,17 @@
 {
-  "platforms": ["android", "ios"],
+  "platforms": [
+    "android",
+    "ios"
+  ],
   "android": {
-    "modules": ["expo.modules.ringtones.RingtonesModule"]
+    "modules": [
+      "expo.modules.ringtones.RingtonesModule",
+      "expo.modules.ringtones.AlarmsModule"
+    ]
   },
   "ios": {
-    "modules": ["RingtonesModule"]
+    "modules": [
+      "RingtonesModule"
+    ]
   }
 }

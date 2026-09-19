@@ -1,0 +1,28 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.ringtones'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(
+  project(":expo-modules-core").projectDir.absolutePath,
+  "ExpoModulesCorePlugin.gradle"
+)
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+android {
+  namespace "expo.modules.ringtones"
+  defaultConfig {
+    minSdkVersion 21
+    targetSdkVersion 34
+  }
+  compileSdkVersion 34
+  lintOptions { abortOnError false }
+}
+
+dependencies {
+  implementation "androidx.core:core-ktx:1.13.1"
+}

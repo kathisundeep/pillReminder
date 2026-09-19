@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import { TONES, toneById } from './tones';
 import { ensureChannelForSound, isDeviceSound } from './sounds';
+import * as Native from '../../modules/ringtones';
 
 const CHANNEL_ID = 'pill-alarm-v2';
 export const SNOOZE_TITLE = 'Snoozed reminder';
@@ -35,7 +36,14 @@ export async function ensureNotificationSetup() {
   }
   if (status !== 'granted') return false;
 
-  if (Platform.OS === 'android') {
+  if (Platform.OS === 'android' && Native.hasNativeAlarms) {
+    // The phone rings medicine alarms itself, on one "Medicine alarms"
+    // channel whose tone the user picks in the phone's settings. The old
+    // per-tone channels would only clutter that list.
+    for (const id of Native.listChannelIds()) {
+      if (String(id).startsWith('pill-alarm')) Native.deleteChannel(id);
+    }
+  } else if (Platform.OS === 'android') {
     try {
       await Notifications.deleteNotificationChannelAsync('pill-alarm');
     } catch (e) {}
@@ -52,7 +60,9 @@ export async function ensureNotificationSetup() {
         enableVibrate: true,
       });
     }
+  }
 
+  if (Platform.OS === 'android') {
     // Channel for incoming guardian alerts (when this device is a guardian).
     await Notifications.setNotificationChannelAsync('guardian-alerts', {
       name: 'Guardian Alerts',
@@ -62,7 +72,6 @@ export async function ensureNotificationSetup() {
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       enableVibrate: true,
     });
-
   }
 
   // Cross-platform: notification categories are how iOS gets action buttons at
@@ -170,6 +179,7 @@ export async function scheduleWeeklyAlarm({ weekday, hour, minute, ...who }) {
 // medicineId/medicineName form still works.
 export async function scheduleSnooze({ minutes, toneId, slot, ...who }) {
   const meds = medsOf({ ...who, toneId });
+  if (Native.hasNativeAlarms) return nativeSnooze(meds, minutes, slot);
   const { channelId, sound } = await toneFor(toneId ?? meds[0]?.toneId);
   // Guard the arithmetic: an absent or non-numeric `minutes` used to produce a
   // NaN delay, i.e. an alarm that never fires. "Not specified" falls back to the
@@ -256,7 +266,60 @@ export async function cancelManyNotifications(ids) {
 // user explicitly asked for, and this runs on every app launch — cancelling
 // everything meant snoozing a dose and switching apps silently lost the
 // re-alarm.
+// ---- Native alarms (Android builds that have them) ----
+// Same grouping, same notification text and data; the phone rings it.
+
+function nativeAlarm(g) {
+  const meds = g.meds.map((m) => ({ id: m.id, name: m.name, toneId: m.toneId }));
+  const slot = `${pad2(g.hour)}:${pad2(g.minute)}`;
+  const content = alarmContent(meds, { slot });
+  return {
+    id: `slot-${pad2(g.hour)}${pad2(g.minute)}-${g.weekday || 0}`,
+    hour: g.hour,
+    minute: g.minute,
+    weekday: g.weekday || 0,
+    title: content.title,
+    body: content.body,
+    data: JSON.stringify(content.data),
+  };
+}
+
+function nativeSnooze(meds, minutes, slot) {
+  const mins = minutes == null ? NaN : Number(minutes);
+  const seconds = Number.isFinite(mins) ? Math.max(60, mins * 60) : 600;
+  const content = alarmContent(meds, { title: SNOOZE_TITLE, slot: slot ?? null });
+  const id = `snooze-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  Native.addOneShotAlarm({
+    id,
+    oneShotAt: Date.now() + seconds * 1000,
+    hour: 0,
+    minute: 0,
+    weekday: 0,
+    title: content.title,
+    body: content.body,
+    data: JSON.stringify(content.data),
+  });
+  return id;
+}
+
+async function resyncNative(medicines) {
+  // Anything expo-notifications armed before the switch would ring a second
+  // time, as a plain notification.
+  await Notifications.cancelAllScheduledNotificationsAsync();
+  const idMap = {};
+  for (const med of medicines || []) idMap[med.id] = [];
+  const alarms = groupAlarms(medicines).map((g) => {
+    const a = nativeAlarm(g);
+    for (const m of g.meds) idMap[m.id].push(a.id);
+    return a;
+  });
+  Native.setRepeatingAlarms(alarms);
+  return idMap;
+}
+
 export async function resyncAlarms(medicines) {
+  if (Native.hasNativeAlarms) return resyncNative(medicines);
+
   const existing = await Notifications.getAllScheduledNotificationsAsync();
   const pendingSnoozes = (existing || []).filter(
     (n) => n.content?.title === SNOOZE_TITLE

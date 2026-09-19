@@ -2,7 +2,8 @@
 // Reschedule / Skip), foreground sweeps, and listener cleanup.
 
 import { render, act, screen } from '@testing-library/react-native';
-import { AppState } from 'react-native';
+import { AppState, Linking } from 'react-native';
+import * as Ringtones from '../../modules/ringtones';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import App from '../../App';
@@ -576,5 +577,40 @@ describe('App — guardian request notification', () => {
     await flush();
 
     expect(history().filter((r) => r.status === 'taken')).toHaveLength(0);
+  });
+});
+
+describe('App — a native alarm opens the app', () => {
+  let ids;
+
+  beforeEach(async () => {
+    await signIn();
+    ids = [
+      await addMedicine(null, { name: 'Aspirin', times: ['08:00'] }),
+      await addMedicine(null, { name: 'Metformin', times: ['08:00'] }),
+    ];
+  });
+
+  const link = (action) =>
+    `pillreminder://alarm?alarmId=slot-0800-0&nid=77&data=${encodeURIComponent(
+      JSON.stringify({ type: 'pill-alarm', medicineIds: ids, slot: '08:00' })
+    )}${action ? `&action=${action}` : ''}`;
+
+  it('records Taken for every medicine on it and stops the ringing', async () => {
+    jest.spyOn(Linking, 'getInitialURL').mockResolvedValueOnce(link('TAKEN'));
+    await mountApp();
+    await flush();
+
+    const taken = history().filter((r) => r.status === 'taken');
+    expect(taken.map((r) => r.medicine_id).sort()).toEqual([...ids].sort());
+    expect(Ringtones.dismissAlarm).toHaveBeenCalledWith(77);
+  });
+
+  it('ignores a link that is not an alarm', async () => {
+    jest.spyOn(Linking, 'getInitialURL').mockResolvedValueOnce('https://example.com');
+    await mountApp();
+    await flush();
+    expect(history()).toHaveLength(0);
+    expect(Ringtones.dismissAlarm).not.toHaveBeenCalled();
   });
 });

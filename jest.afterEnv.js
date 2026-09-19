@@ -11,6 +11,7 @@ const Device = require('expo-device');
 const ImagePicker = require('expo-image-picker');
 const ImageManipulator = require('expo-image-manipulator');
 const { resetFakeIds } = require('./test/fakeSupabase');
+const Ringtones = require('./modules/ringtones');
 
 // Force the @supabase/supabase-js mock factory to run even in test files that
 // never import it, so globalThis.__db is always available to reset.
@@ -33,6 +34,10 @@ beforeEach(async () => {
   ImagePicker.__reset();
   ImageManipulator.__reset();
   Device.isDevice = true;
+  // Native alarms off unless a test turns them on (an older APK / iOS).
+  Ringtones.__state.alarms = {
+    available: false, repeating: [], oneShots: [], dismissed: [], fullScreen: true,
+  };
   await AsyncStorage.clear();
   // src/utils/storage.js caches the signed-in uid in a module-level object that
   // outlives a test. Clear it so a test that switches identity with db.as()

@@ -1,5 +1,14 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  Alert,
+  Switch,
+  Platform,
+  AppState,
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   Screen,
@@ -17,6 +26,15 @@ import { logoutUser } from '../utils/storage';
 import { clearStoredRole, useRole, ROLES } from '../utils/role';
 import { applyUpdateIfAny, buildLabel } from '../utils/updates';
 import { colors } from '../theme';
+import {
+  hasNativeAlarms,
+  getAlarmSoundTitle,
+  openAlarmSoundSettings,
+  getFullScreenAlarms,
+  setFullScreenAlarms,
+  canUseFullScreenAlarms,
+  openFullScreenSettings,
+} from '../../modules/ringtones';
 
 const appVersion = require('../../app.json').expo.version;
 
@@ -35,6 +53,9 @@ export default function SettingsScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [updateNote, setUpdateNote] = useState(null);
   const [build] = useState(() => buildLabel(appVersion));
+  // Alarm tone lives in the phone's own notification settings; this only
+  // shows it and opens the page. Re-read on return, since it is changed there.
+  const [alarm, setAlarm] = useState(() => readAlarm());
 
   const load = useCallback(async () => {
     setDetails(await getMyDetails());
@@ -44,8 +65,18 @@ export default function SettingsScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       load();
+      setAlarm(readAlarm());
+      const sub = AppState.addEventListener('change', (st) => {
+        if (st === 'active') setAlarm(readAlarm());
+      });
+      return () => sub.remove();
     }, [load])
   );
+
+  const toggleFullScreen = (on) => {
+    setFullScreenAlarms(on);
+    setAlarm(readAlarm());
+  };
 
   const onLogout = async () => {
     await logoutUser();
@@ -118,6 +149,66 @@ export default function SettingsScreen({ navigation }) {
             using your username.
           </Text>
         </Card>
+
+        {!isGuardian ? (
+          <Card>
+            <CardTitle>Medicine alarm</CardTitle>
+            {hasNativeAlarms ? (
+              <>
+                <View style={styles.alarmRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.alarmLabel}>Alarm tone</Text>
+                    <Text style={styles.alarmValue}>{alarm.tone || 'Phone default'}</Text>
+                  </View>
+                  <Button
+                    title="Change"
+                    variant="neutral"
+                    onPress={openAlarmSoundSettings}
+                    accessibilityLabel="Change alarm tone"
+                  />
+                </View>
+                <View style={styles.alarmRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.alarmLabel}>Full-screen alarm</Text>
+                    <Text style={styles.alarmValue}>
+                      {alarm.fullScreen
+                        ? 'Shows over the lock screen when a dose is due.'
+                        : 'A ringing notification only.'}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={alarm.fullScreen}
+                    onValueChange={toggleFullScreen}
+                    trackColor={{ true: colors.emerald600 }}
+                    accessibilityLabel="Full-screen alarm"
+                  />
+                </View>
+                {alarm.fullScreen && !alarm.fullScreenAllowed ? (
+                  <>
+                    <Text style={styles.alarmWarn}>
+                      Your phone needs permission to show alarms full screen.
+                    </Text>
+                    <Button
+                      title="Allow full-screen alarms"
+                      variant="neutral"
+                      onPress={openFullScreenSettings}
+                    />
+                  </>
+                ) : null}
+                <Text style={styles.alarmNote}>
+                  Alarms ring for one minute. The tone is set in your phone's
+                  settings for PillReminder → Medicine alarms → Sound.
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.alarmNote}>
+                {Platform.OS === 'ios'
+                  ? 'iPhone plays the app\'s alarm sound; iOS does not let apps use the phone\'s own tones.'
+                  : 'Install the latest version of the app to choose the alarm tone from your phone.'}
+              </Text>
+            )}
+          </Card>
+        ) : null}
 
         <Card>
           <CardTitle>Your details</CardTitle>
@@ -226,7 +317,20 @@ export default function SettingsScreen({ navigation }) {
   );
 }
 
+function readAlarm() {
+  return {
+    tone: getAlarmSoundTitle(),
+    fullScreen: getFullScreenAlarms(),
+    fullScreenAllowed: canUseFullScreenAlarms(),
+  };
+}
+
 const styles = StyleSheet.create({
+  alarmRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
+  alarmLabel: { fontSize: 14.5, fontWeight: '700', color: colors.heading },
+  alarmValue: { fontSize: 13, color: colors.muted, marginTop: 2 },
+  alarmNote: { fontSize: 12.5, color: colors.muted, lineHeight: 18 },
+  alarmWarn: { fontSize: 12.5, color: colors.danger, lineHeight: 18, marginBottom: 8 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   build: {
     textAlign: 'center',

@@ -3,6 +3,7 @@ import { showScreen, press, typeInto, flush } from '../../test/renderScreen';
 import RegisterScreen from '../../src/screens/RegisterScreen';
 import ProfileDetailsScreen from '../../src/screens/ProfileDetailsScreen';
 import SettingsScreen from '../../src/screens/SettingsScreen';
+import * as Ringtones from '../../modules/ringtones';
 import { registerUser, loginUser } from '../../src/utils/storage';
 import { getMyDetails, needsOnboarding } from '../../src/utils/profile';
 import { ROLES } from '../../src/utils/role';
@@ -366,6 +367,58 @@ describe('ProfileDetailsScreen', () => {
 });
 
 // ===========================================================================
+describe('SettingsScreen — medicine alarm', () => {
+  it('shows the phone`s alarm tone and opens the phone setting to change it', async () => {
+    Ringtones.__state.alarms.available = true;
+    await signedIn('alice');
+    await showScreen(SettingsScreen);
+
+    expect(screen.getByText('Medicine alarm')).toBeTruthy();
+    expect(screen.getByText('Oxygen')).toBeTruthy();
+    await press(screen.getByLabelText('Change alarm tone'));
+    expect(Ringtones.openAlarmSoundSettings).toHaveBeenCalled();
+  });
+
+  it('switches between a full-screen alarm and a notification only', async () => {
+    Ringtones.__state.alarms.available = true;
+    await signedIn('alice');
+    await showScreen(SettingsScreen);
+    expect(screen.getByText(/Shows over the lock screen/)).toBeTruthy();
+
+    await act(async () => {
+      fireEvent(screen.getByLabelText('Full-screen alarm'), 'valueChange', false);
+    });
+    await flush();
+
+    expect(Ringtones.setFullScreenAlarms).toHaveBeenCalledWith(false);
+    expect(screen.getByText('A ringing notification only.')).toBeTruthy();
+  });
+
+  it('asks for full-screen permission when the phone has not allowed it', async () => {
+    Ringtones.__state.alarms.available = true;
+    Ringtones.canUseFullScreenAlarms.mockReturnValue(false);
+    await signedIn('alice');
+    await showScreen(SettingsScreen);
+
+    await press('Allow full-screen alarms');
+    expect(Ringtones.openFullScreenSettings).toHaveBeenCalled();
+    Ringtones.canUseFullScreenAlarms.mockReturnValue(true);
+  });
+
+  it('explains when this build cannot use the phone`s tones', async () => {
+    await signedIn('alice');
+    await showScreen(SettingsScreen);
+    expect(screen.queryByLabelText('Change alarm tone')).toBeNull();
+    expect(screen.getByText(/alarm sound|latest version/)).toBeTruthy();
+  });
+
+  it('shows no alarm settings to a guardian', async () => {
+    await signedIn('bob', { isGuardian: true });
+    await showScreen(SettingsScreen, { role: ROLES.GUARDIAN });
+    expect(screen.queryByText('Medicine alarm')).toBeNull();
+  });
+});
+
 describe('SettingsScreen', () => {
   it('shows who you are and that it cannot be changed', async () => {
     await signedIn('alice');
