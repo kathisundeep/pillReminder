@@ -19,3 +19,6 @@ coverage/
 
 # Firebase service-account keys are secrets (uploaded to EAS, never committed)
 *firebase-adminsdk*.json
+
+# Gradle output inside local native modules
+modules/**/build/
