@@ -18,6 +18,9 @@ import {
   sendPhoneCode,
   verifyPhoneCode,
   createAccount,
+  resetPassword,
+  changePassword,
+  changePhone,
   PASSWORD_MIN,
 } from '../../src/utils/onboarding';
 import {
@@ -179,7 +182,7 @@ describe('phone verification', () => {
 
     const res = await sendPhoneCode('+91 98765 43210', false);
     expect(res.ok).toBe(true);
-    expect(sentWith).toEqual({ phone: '+919876543210', isGuardian: false });
+    expect(sentWith).toEqual({ phone: '+919876543210', isGuardian: false, purpose: 'signup' });
   });
 
   it('will not spend an SMS on a malformed number', async () => {
@@ -443,5 +446,83 @@ describe('the details step is asked once', () => {
     expect(res.ok).toBe(true);
     expect((await getMyDetails()).full_name).toBe('Alice R');
     expect(await needsOnboarding()).toBe(false);
+  });
+});
+
+describe('account recovery', () => {
+  it('sends and verifies a code for the purpose it is for', async () => {
+    const seen = [];
+    db().onFunction('send-otp', async (body) => { seen.push(['send', body]); return { ok: true }; });
+    db().onFunction('verify-otp', async (body) => { seen.push(['verify', body]); return { ok: true, claimToken: 't1' }; });
+
+    await sendPhoneCode('+919876543210', true, 'reset');
+    const res = await verifyPhoneCode('+919876543210', true, '123456', 'reset');
+
+    expect(res.claimToken).toBe('t1');
+    expect(seen).toEqual([
+      ['send', { phone: '+919876543210', isGuardian: true, purpose: 'reset' }],
+      ['verify', { phone: '+919876543210', isGuardian: true, code: '123456', purpose: 'reset' }],
+    ]);
+  });
+
+  it('resets a forgotten password with a verified claim, and names the account', async () => {
+    let got = null;
+    db().onFunction('reset-password', async (body) => { got = body; return { ok: true, username: 'alice' }; });
+
+    const res = await resetPassword({
+      phone: '+919876543210', isGuardian: false, claimToken: 't1', password: 'newpass12', confirm: 'newpass12',
+    });
+
+    expect(res).toMatchObject({ ok: true, username: 'alice' });
+    expect(got).toEqual({ phone: '+919876543210', isGuardian: false, claimToken: 't1', password: 'newpass12' });
+  });
+
+  it('checks the new password before asking the server', async () => {
+    let called = false;
+    db().onFunction('reset-password', async () => { called = true; return { ok: true }; });
+
+    expect((await resetPassword({ phone: '+919876543210', claimToken: 't', password: 'short', confirm: 'short' })).error)
+      .toMatch(/at least 8/);
+    expect((await resetPassword({ phone: '+919876543210', claimToken: 't', password: 'abcdefg1', confirm: 'abcdefg2' })).error)
+      .toMatch(/must match/);
+    expect((await resetPassword({ phone: '+919876543210', password: 'abcdefg1', confirm: 'abcdefg1' })).error)
+      .toMatch(/Verify your phone/);
+    expect(called).toBe(false);
+  });
+
+  it('changes the password with the current one', async () => {
+    let got = null;
+    db().onFunction('change-password', async (body) => { got = body; return { ok: true }; });
+
+    expect((await changePassword({ current: 'oldpass12', next: 'newpass12', confirm: 'newpass12' })).ok).toBe(true);
+    expect(got).toEqual({ currentPassword: 'oldpass12', newPassword: 'newpass12' });
+  });
+
+  it('refuses a new password equal to the current one, or no current one', async () => {
+    expect((await changePassword({ current: 'same1234', next: 'same1234', confirm: 'same1234' })).error)
+      .toMatch(/different/);
+    expect((await changePassword({ current: '', next: 'newpass12', confirm: 'newpass12' })).error)
+      .toMatch(/current password/);
+  });
+
+  it('reports the server refusing a wrong current password', async () => {
+    db().onFunction('change-password', async () => ({ error: 'Your current password is not right.' }));
+    const res = await changePassword({ current: 'wrong123', next: 'newpass12', confirm: 'newpass12' });
+    expect(res).toEqual({ ok: false, error: 'Your current password is not right.' });
+  });
+
+  it('changes the phone with a verified claim and the current password', async () => {
+    let got = null;
+    db().onFunction('change-phone', async (body) => { got = body; return { ok: true, phone: body.phone }; });
+
+    const res = await changePhone({ phone: '+91 91234 56780', claimToken: 't2', password: 'oldpass12' });
+    expect(res).toMatchObject({ ok: true, phone: '+919123456780' });
+    expect(got).toEqual({ phone: '+919123456780', claimToken: 't2', password: 'oldpass12' });
+  });
+
+  it('will not change the phone without the code or the password', async () => {
+    expect((await changePhone({ phone: '+919123456780', password: 'x' })).error).toMatch(/Verify the new number/);
+    expect((await changePhone({ phone: '+919123456780', claimToken: 't' })).error).toMatch(/current password/);
+    expect((await changePhone({ phone: '12', claimToken: 't', password: 'x' })).ok).toBe(false);
   });
 });

@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     // exactly this number and role.
     const { data: claim } = await db
       .from('phone_verifications')
-      .select('id, phone, is_guardian, consumed_at, claimed_at')
+      .select('id, phone, is_guardian, consumed_at, claimed_at, purpose')
       .eq('claim_token', String(claimToken ?? ''))
       .maybeSingle();
 
@@ -43,7 +43,8 @@ Deno.serve(async (req) => {
       claim.claimed_at ||
       !claim.consumed_at ||
       claim.phone !== phone ||
-      claim.is_guardian !== guardian
+      claim.is_guardian !== guardian ||
+      (claim.purpose ?? 'signup') !== 'signup'
     ) {
       return json({ error: 'Verify your phone number again.' }, 400);
     }

@@ -7,6 +7,9 @@ import { StatusBar } from 'expo-status-bar';
 
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
+import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
+import ChangePasswordScreen from './src/screens/ChangePasswordScreen';
+import ChangePhoneScreen from './src/screens/ChangePhoneScreen';
 import ProfileDetailsScreen from './src/screens/ProfileDetailsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import HomeScreen from './src/screens/HomeScreen';
@@ -260,6 +263,11 @@ export default function App() {
                 component={RegisterScreen}
                 options={{ headerShown: false }}
               />
+              <Stack.Screen
+                name="ForgotPassword"
+                component={ForgotPasswordScreen}
+                options={{ headerShown: false }}
+              />
             </>
           )}
 
@@ -325,6 +333,16 @@ export default function App() {
                 component={SettingsScreen}
                 options={{ headerShown: false }}
               />
+              <Stack.Screen
+                name="ChangePassword"
+                component={ChangePasswordScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="ChangePhone"
+                component={ChangePhoneScreen}
+                options={{ headerShown: false }}
+              />
             </>
           )}
 
@@ -384,6 +402,16 @@ export default function App() {
               <Stack.Screen
                 name="Settings"
                 component={SettingsScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="ChangePassword"
+                component={ChangePasswordScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="ChangePhone"
+                component={ChangePhoneScreen}
                 options={{ headerShown: false }}
               />
             </>

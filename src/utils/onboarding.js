@@ -144,15 +144,17 @@ async function invoke(fn, body) {
   return { ok: true, ...(data || {}) };
 }
 
-export async function sendPhoneCode(phone, isGuardian) {
+// `purpose` is what the code is for: 'signup', 'reset' (forgot password) or
+// 'change_phone'. A code only works for the purpose it was sent for.
+export async function sendPhoneCode(phone, isGuardian, purpose = 'signup') {
   const p = normalisePhone(phone);
   if (!p) return { ok: false, error: phoneError(phone) };
-  return invoke('send-otp', { phone: p, isGuardian: !!isGuardian });
+  return invoke('send-otp', { phone: p, isGuardian: !!isGuardian, purpose });
 }
 
-// Returns { ok, claimToken } — the token create-account requires, so a verified
+// Returns { ok, claimToken } — the token the next step requires, so a verified
 // number cannot be swapped for an unverified one at the final step.
-export async function verifyPhoneCode(phone, isGuardian, code) {
+export async function verifyPhoneCode(phone, isGuardian, code, purpose = 'signup') {
   const p = normalisePhone(phone);
   if (!p) return { ok: false, error: phoneError(phone) };
   if (!/^\d{6}$/.test(String(code ?? '').trim()))
@@ -161,7 +163,42 @@ export async function verifyPhoneCode(phone, isGuardian, code) {
     phone: p,
     isGuardian: !!isGuardian,
     code: String(code).trim(),
+    purpose,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Getting back in, and changing how you get in.
+// ---------------------------------------------------------------------------
+
+// Forgot password: after a 'reset' code is verified. Returns { ok, username }.
+export async function resetPassword({ phone, isGuardian, claimToken, password, confirm }) {
+  const problem = passwordError(password, confirm);
+  if (problem) return { ok: false, error: problem };
+  const p = normalisePhone(phone);
+  if (!p) return { ok: false, error: phoneError(phone) };
+  if (!claimToken) return { ok: false, error: 'Verify your phone number first.' };
+  return invoke('reset-password', { phone: p, isGuardian: !!isGuardian, claimToken, password });
+}
+
+// Signed in: needs the current password.
+export async function changePassword({ current, next, confirm }) {
+  if (!String(current ?? '')) return { ok: false, error: 'Enter your current password.' };
+  const problem = passwordError(next, confirm);
+  if (problem) return { ok: false, error: problem };
+  if (current === next)
+    return { ok: false, error: 'Choose a password different from the current one.' };
+  return invoke('change-password', { currentPassword: current, newPassword: next });
+}
+
+// Signed in: after a 'change_phone' code sent to the NEW number is verified,
+// plus the current password. Returns { ok, phone }.
+export async function changePhone({ phone, claimToken, password }) {
+  const p = normalisePhone(phone);
+  if (!p) return { ok: false, error: phoneError(phone) };
+  if (!claimToken) return { ok: false, error: 'Verify the new number first.' };
+  if (!String(password ?? '')) return { ok: false, error: 'Enter your current password.' };
+  return invoke('change-phone', { phone: p, claimToken, password });
 }
 
 // ---------------------------------------------------------------------------

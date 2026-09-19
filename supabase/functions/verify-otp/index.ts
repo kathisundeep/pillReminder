@@ -1,19 +1,23 @@
-// POST { phone, isGuardian, code } -> { ok, claimToken }
+// POST { phone, isGuardian, code, purpose? } -> { ok, claimToken }
+//
+// Only a code sent for the same purpose counts (see send-otp).
 //
 // The claim token is what create-account requires. Without it the client could
 // verify one number and register with another.
 
 import {
-  admin, json, CORS, normalisePhone, sha256, LIMITS,
+  admin, json, CORS, normalisePhone, sha256, LIMITS, purposeOf,
 } from '../_shared/otp.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
   try {
-    const { phone: rawPhone, isGuardian, code } = await req.json();
+    const { phone: rawPhone, isGuardian, code, purpose: rawPurpose } = await req.json();
     const phone = normalisePhone(rawPhone);
     if (!phone) return json({ error: 'Enter a valid phone number.' }, 400);
+    const purpose = purposeOf(rawPurpose);
+    if (!purpose) return json({ error: 'Unknown request.' }, 400);
 
     const db = admin();
     const { data: row } = await db
@@ -21,6 +25,7 @@ Deno.serve(async (req) => {
       .select('*')
       .eq('phone', phone)
       .eq('is_guardian', isGuardian === true)
+      .eq('purpose', purpose)
       .is('consumed_at', null)
       .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false })

@@ -1,23 +1,30 @@
-// POST { phone, isGuardian } -> { ok }
+// POST { phone, isGuardian, purpose? } -> { ok }
 //
-// Sends a 6-digit code. Refuses before spending an SMS if the number already
-// holds an account of that role, so a user learns immediately rather than after
-// completing the whole form.
+// Sends a 6-digit code. `purpose` is 'signup' (default), 'reset' (forgot
+// password) or 'change_phone'.
+//
+//   signup, change_phone — the number must NOT already hold an account of that
+//     role; refused before spending an SMS, so the user learns at once.
+//   reset — the number must hold one. If it does not, the reply is the same
+//     "sent" and nothing is sent, so this cannot be used to discover which
+//     numbers have accounts.
 
 import {
   admin, json, CORS, normalisePhone, sha256, newCode,
-  tooManyRequests, sendSms, callerIp, LIMITS,
+  tooManyRequests, sendSms, callerIp, LIMITS, purposeOf,
 } from '../_shared/otp.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
   try {
-    const { phone: rawPhone, isGuardian } = await req.json();
+    const { phone: rawPhone, isGuardian, purpose: rawPurpose } = await req.json();
     const phone = normalisePhone(rawPhone);
     if (!phone) {
       return json({ error: 'Enter a valid phone number with its country code.' }, 400);
     }
+    const purpose = purposeOf(rawPurpose);
+    if (!purpose) return json({ error: 'Unknown request.' }, 400);
     const guardian = isGuardian === true;
     const db = admin();
 
@@ -29,9 +36,14 @@ Deno.serve(async (req) => {
       candidate: phone,
       want_guardian: guardian,
     });
-    if (available === false) {
+    if (purpose === 'reset') {
+      // Nothing to reset: answer as if sent, send nothing.
+      if (available !== false) return json({ ok: true });
+    } else if (available === false) {
       return json({
-        error: guardian
+        error: purpose === 'change_phone'
+          ? 'This number is already used by another account.'
+          : guardian
           ? 'This number already has a guardian account. Log in instead.'
           : 'This number already has a patient account. Log in instead.',
       }, 409);
@@ -43,6 +55,7 @@ Deno.serve(async (req) => {
       .insert({
         phone,
         is_guardian: guardian,
+        purpose,
         code_hash: await sha256(code),
         requested_ip: callerIp(req),
         expires_at: new Date(Date.now() + LIMITS.codeTtlMinutes * 60_000).toISOString(),

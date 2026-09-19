@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -22,12 +22,22 @@ import { colors, type } from '../theme';
 
 const appVersion = require('../../app.json').expo.version;
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ route, navigation }) {
   const { setRole } = useRole();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [asGuardian, setAsGuardian] = useState(false);
+
+  // Back from "Forgot password?": the username it found, ready to log in.
+  const returned = route?.params;
+  useEffect(() => {
+    if (returned?.username) {
+      setUsername(returned.username);
+      setPassword('');
+    }
+    if (returned?.asGuardian != null) setAsGuardian(!!returned.asGuardian);
+  }, [returned?.username, returned?.asGuardian]);
 
   const submit = async () => {
     if (!username.trim() || !password.trim()) {
@@ -144,6 +154,14 @@ export default function LoginScreen({ navigation }) {
         />
 
         <Text
+          style={[styles.forgot, { color: asGuardian ? colors.teal700 : colors.emerald700 }]}
+          onPress={() => navigation.navigate('ForgotPassword', { asGuardian })}
+          accessibilityRole="link"
+        >
+          Forgot password?
+        </Text>
+
+        <Text
           style={[styles.switchText, { color: asGuardian ? colors.teal700 : colors.emerald700 }]}
           onPress={() => navigation.navigate('Register')}
         >
@@ -185,6 +203,12 @@ const styles = StyleSheet.create({
   },
   roleToggle: { marginBottom: 20 },
   submit: { marginTop: 6 },
+  forgot: {
+    textAlign: 'center',
+    marginTop: 16,
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
   switchText: {
     textAlign: 'center',
     marginTop: 20,

@@ -21,3 +21,15 @@ verify_jwt = false
 
 [functions.create-account]
 verify_jwt = false
+
+# Forgot password runs signed OUT, like the three above.
+[functions.reset-password]
+verify_jwt = false
+
+# These two need a signed-in caller. They check the JWT themselves
+# (callerFrom in _shared/otp.ts), consistent with the rest.
+[functions.change-password]
+verify_jwt = false
+
+[functions.change-phone]
+verify_jwt = false

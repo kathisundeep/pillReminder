@@ -25,6 +25,7 @@ const ORDER = [
   'course.sql',
   'guardian_readings.sql',
   'plans_v2.sql',
+  'account_recovery.sql',
   'guardian_session.sql',
 ];
 

@@ -14,7 +14,7 @@
     "qr": "node scripts/make-qr.js",
     "release:apk": "node scripts/release-apk.js",
     "sql": "node scripts/build-sql.js",
-    "fn:deploy": "npx -y supabase@latest functions deploy send-otp verify-otp create-account --project-ref accxqbtukprszgwroorq",
+    "fn:deploy": "npx -y supabase@latest functions deploy send-otp verify-otp create-account reset-password change-password change-phone --project-ref accxqbtukprszgwroorq",
     "fn:check": "node scripts/check-functions.js",
     "fn:login": "npx -y supabase@latest login",
     "fn:logs": "echo \"Function logs are dashboard-only (the CLI has no logs command):\" && echo \"  https://supabase.com/dashboard/project/accxqbtukprszgwroorq/functions/send-otp/logs\"",

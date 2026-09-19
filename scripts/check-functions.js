@@ -16,7 +16,7 @@ const { expo } = require('../app.json');
 
 const URL = expo.extra?.supabaseUrl;
 const KEY = expo.extra?.supabaseAnonKey;
-const FUNCTIONS = ['send-otp', 'verify-otp', 'create-account'];
+const FUNCTIONS = ['send-otp', 'verify-otp', 'create-account', 'reset-password', 'change-password', 'change-phone'];
 
 async function probe(name) {
   const started = Date.now();

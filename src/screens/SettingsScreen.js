@@ -254,12 +254,12 @@ export default function SettingsScreen({ navigation }) {
             <Button
               title="Change password"
               variant="neutral"
-              onPress={() => notYet('Changing your password')}
+              onPress={() => navigation.navigate('ChangePassword')}
             />
             <Button
               title="Change phone number"
               variant="neutral"
-              onPress={() => notYet('Changing your phone number')}
+              onPress={() => navigation.navigate('ChangePhone')}
             />
           </View>
           <Text style={styles.hint}>

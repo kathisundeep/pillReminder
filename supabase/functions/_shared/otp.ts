@@ -49,6 +49,51 @@ export function newCode(): string {
   return String(n).padStart(6, '0');
 }
 
+// What a phone code is for. verify-otp only accepts a code for the purpose it
+// was sent for, and each function that spends a claim checks it again.
+export const PURPOSES = ['signup', 'reset', 'change_phone'] as const;
+export type Purpose = (typeof PURPOSES)[number];
+
+export function purposeOf(raw: unknown): Purpose | null {
+  const p = raw == null || raw === '' ? 'signup' : String(raw);
+  return (PURPOSES as readonly string[]).includes(p) ? (p as Purpose) : null;
+}
+
+// A claim is spent within this long of the code being verified.
+export const CLAIM_TTL_MINUTES = 15;
+
+// The same rule the app shows: 8+ characters, a letter and a number.
+export function passwordProblem(raw: unknown): string | null {
+  const p = String(raw ?? '');
+  if (p.length < 8) return 'Use at least 8 characters for your password.';
+  if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) {
+    return 'Include at least one letter and one number.';
+  }
+  return null;
+}
+
+// The signed-in caller, from the Authorization header, or null.
+export async function callerFrom(req: Request, db: ReturnType<typeof admin>) {
+  const header = req.headers.get('Authorization') || '';
+  const jwt = header.replace(/^Bearer\s+/i, '');
+  if (!jwt) return null;
+  const { data, error } = await db.auth.getUser(jwt);
+  if (error || !data?.user) return null;
+  return data.user;
+}
+
+// Is this the account's password? Checked on a throwaway client so the
+// caller's own session is untouched, and that sign-in is ended straight away.
+export async function passwordMatches(email: string, password: string): Promise<boolean> {
+  const client = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_ANON_KEY')!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { error } = await client.auth.signInWithPassword({ email, password: String(password ?? '') });
+  if (error) return false;
+  await client.auth.signOut({ scope: 'local' });
+  return true;
+}
+
 export function synthEmail(username: string): string {
   return `${String(username).trim().toLowerCase()}@pillreminder.app`;
 }
