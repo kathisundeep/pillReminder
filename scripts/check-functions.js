@@ -71,13 +71,21 @@ async function main() {
   }
 
   if (bad) {
+    // Which ones are missing decides what is actually broken: the first three
+    // are registration, the rest are getting back in and changing details.
+    const missing = results.filter((r) => verdict(r)[0] !== 'LIVE').map((r) => r.name);
+    const SIGNUP = ['send-otp', 'verify-otp', 'create-account'];
+    const breaksSignup = missing.some((n) => SIGNUP.includes(n));
     console.log(
-      `\n${bad} of ${results.length} not ready. Registration will fail at the ` +
-        'phone step until they are.\n'
+      `\n${bad} of ${results.length} not ready: ${missing.join(', ')}.\n` +
+        (breaksSignup
+          ? 'Registration will fail at the phone step until they are.\n'
+          : 'Registration still works; forgot password, change password and ' +
+            'change phone will fail until they are.\n')
     );
     process.exit(1);
   }
-  console.log('\nAll three are live. Registration can complete.\n');
+  console.log(`\nAll ${results.length} are live.\n`);
 }
 
 main().catch((e) => {
