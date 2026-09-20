@@ -32,6 +32,7 @@ import {
   sweepMissedDoses,
 } from './src/utils/guardian';
 import { alarmMedicineIds, applyAlarmAction, parseAlarmUrl } from './src/utils/alarmActions';
+import { loadDiagnosticsChoice, installCrashReporting, track } from './src/utils/telemetry';
 import { dismissAlarm } from './modules/ringtones';
 import { resyncAlarmsFromCloud } from './src/utils/sync';
 import {
@@ -121,6 +122,10 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
+      // Before anything else that could throw.
+      await loadDiagnosticsChoice();
+      installCrashReporting();
+
       await ensureNotificationSetup();
       const user = await getSession();
       // Open straight into the flow this phone last used, and confirm it with
@@ -146,6 +151,7 @@ export default function App() {
       registerForPushTokenAsync();
       registerBackgroundSweep();
       sweepMissedDoses();
+      if (user) track('app_open', { role: activeRole || 'unknown' });
 
       // Last, so a reload cannot cut short the setup above.
       applyUpdateIfAny();

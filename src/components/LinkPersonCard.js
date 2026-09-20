@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { StyleSheet, Alert } from 'react-native';
 import { pairWithCode } from '../utils/guardianCloud';
 import { Card, CardTitle, CardSubtitle, Button, Field, Input } from './ui';
+import { track } from '../utils/telemetry';
 
 // The username + 6-digit code form a guardian uses to link to a person.
 // `onLinked(username)` runs after a successful link.
@@ -20,6 +21,7 @@ export default function LinkPersonCard({ onLinked }) {
       Alert.alert('Could not link', res.error || 'Invalid username or code.');
       return;
     }
+    track('guardian_linked');
     const who = res.user?.username || uname;
     setUname('');
     setCode('');

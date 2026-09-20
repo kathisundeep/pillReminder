@@ -648,7 +648,8 @@ describe('AddMedicineScreen — edit mode', () => {
     });
     await flush();
 
-    expect(meds()).toHaveLength(0);
+    // Marked deleted, not removed: its dose history stays readable.
+    expect(meds()[0].deleted_at).toBeTruthy();
     expect(scheduled()).toHaveLength(0);
     expect(navigation.goBack).toHaveBeenCalled();
   });

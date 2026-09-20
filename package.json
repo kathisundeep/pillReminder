@@ -6,6 +6,7 @@
     "start": "expo start",
     "android": "expo run:android",
     "build:apk": "eas build -p android --profile preview",
+    "update": "eas update --branch preview --private-key-path keys/private-key.pem",
     "test": "jest --selectProjects unit",
     "test:watch": "jest --selectProjects unit --watch",
     "test:coverage": "jest --selectProjects unit --coverage",

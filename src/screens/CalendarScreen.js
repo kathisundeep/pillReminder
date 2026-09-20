@@ -213,7 +213,8 @@ export default function CalendarScreen({ route, navigation }) {
   const load = useCallback(async () => {
     if (userId) {
       const [meds, hist, g] = await Promise.all([
-        getUserMedicines(userId),
+        // Deleted medicines included: they explain days already past.
+        getUserMedicines(userId, { includeDeleted: true }),
         getUserHistory(userId),
         getUserGraceMinutes(userId),
       ]);
@@ -226,7 +227,7 @@ export default function CalendarScreen({ route, navigation }) {
     const user = await getSession();
     if (!user) return setLoading(false);
     const [meds, hist, profile] = await Promise.all([
-      getMedicines(user),
+      getMedicines(user, { includeDeleted: true }),
       getHistory(user),
       getMyProfile().catch(() => null),
     ]);

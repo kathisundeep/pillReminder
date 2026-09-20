@@ -34,6 +34,7 @@ import { resyncAlarmsFromCloud } from '../utils/sync';
 import { clearStoredRole, useRole } from '../utils/role';
 import { needsOnboarding } from '../utils/profile';
 import { buildDay } from '../utils/today';
+import { track } from '../utils/telemetry';
 import {
   formatTime,
   slotStatus,
@@ -248,6 +249,7 @@ export default function HomeScreen({ navigation }) {
     }
     const mine = ++version.current;
     draw(medsRef.current, entries);
+    track('dose_marked', { status: changes[0].next, count: changes.length });
 
     try {
       for (const { med, slot, next } of changes) {
@@ -281,7 +283,7 @@ export default function HomeScreen({ navigation }) {
   const confirmDelete = (med) => {
     Alert.alert(
       `Delete ${med.name}?`,
-      'This removes the medicine, its alarms and its dose history.',
+      'This stops its alarms. Doses you already recorded stay in your calendar and report.',
       [
         { text: 'Cancel', style: 'cancel' },
         {

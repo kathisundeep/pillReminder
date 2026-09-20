@@ -21,6 +21,7 @@ import MedicineDraftCard from '../components/MedicineDraftCard';
 import { createAddMedicineRequest } from '../utils/guardianCloud';
 import { notifyPatientOfRequest } from '../utils/guardian';
 import { todayISO, addDaysISO, durationOf } from '../utils/course';
+import { track } from '../utils/telemetry';
 import { colors as theme } from '../theme';
 
 const SNOOZE_OPTIONS = [5, 10, 15, 30];
@@ -239,6 +240,7 @@ export default function AddMedicineScreen({ route, navigation }) {
         await updateMedicine(user, m.id, { notificationIds: idMap[m.id] || [] });
       }
 
+      track(isEdit ? 'medicine_edited' : 'medicine_added', { count: ready.length });
       navigation.goBack();
     } catch (e) {
       Alert.alert('Save failed', String(e?.message || e));

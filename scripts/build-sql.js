@@ -26,6 +26,8 @@ const ORDER = [
   'guardian_readings.sql',
   'plans_v2.sql',
   'account_recovery.sql',
+  'soft_delete.sql',
+  'diagnostics.sql',
   'guardian_session.sql',
 ];
 

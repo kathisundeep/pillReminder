@@ -133,6 +133,9 @@ export function rowToMed(r, notifMap = {}) {
     photo: r.photo || null,
     startDate: r.start_date || null,
     endDate: r.end_date || null,
+    // Set when the user deleted it. The row stays so its dose history — and
+    // the calendar days it belongs to — survive.
+    deletedAt: r.deleted_at || null,
     notificationIds: notifMap[r.id] || [],
     createdAt: r.created_at,
   };
@@ -163,21 +166,27 @@ export function medToRow(med, uid) {
   return row;
 }
 
-export async function getMedicines() {
+// Active medicines. `includeDeleted` adds the ones the user has deleted —
+// the calendar and the report need them to explain past days.
+export async function getMedicines(user, { includeDeleted = false } = {}) {
   try {
     const uid = await currentUid();
     if (!uid) return [];
-    const { data, error } = await supabase
+    let q = supabase
       .from('medicines')
       .select('*')
       .eq('user_id', uid)
       .order('created_at', { ascending: true });
+    if (!includeDeleted) q = q.is('deleted_at', null);
+    const { data, error } = await q;
     // NOTE: photos ride along here on purpose — the alarm screen reads them
     // from the offline cache. See getMedicineSummaries() for list views.
     if (error) throw error;
     const notifMap = await getNotifMap();
     const meds = (data || []).map((r) => rowToMed(r, notifMap));
-    await AsyncStorage.setItem(KEYS.MEDS_CACHE, JSON.stringify(meds));
+    // The cache exists to keep alarms working offline, so it holds the active
+    // list only.
+    if (!includeDeleted) await AsyncStorage.setItem(KEYS.MEDS_CACHE, JSON.stringify(meds));
     return meds;
   } catch (e) {
     // Offline / error → fall back to the last cached list (keeps alarms working).
@@ -201,9 +210,15 @@ export async function saveMedicines() {
   // No-op in the cloud model; medicines are persisted individually.
 }
 
+// Marked deleted, not removed: dose_history cascades, so removing the row
+// would erase every dose recorded for it and rewrite past calendar days.
 export async function deleteMedicine(user, id) {
   const uid = await currentUid();
-  await supabase.from('medicines').delete().eq('id', id).eq('user_id', uid);
+  await supabase
+    .from('medicines')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('user_id', uid);
   const map = await getNotifMap();
   delete map[id];
   await AsyncStorage.setItem(KEYS.NOTIF_IDS, JSON.stringify(map));

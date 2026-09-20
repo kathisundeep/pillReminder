@@ -27,6 +27,11 @@ import { clearStoredRole, useRole, ROLES } from '../utils/role';
 import { applyUpdateIfAny, buildLabel } from '../utils/updates';
 import { colors } from '../theme';
 import {
+  diagnosticsEnabled,
+  setDiagnosticsEnabled,
+  loadDiagnosticsChoice,
+} from '../utils/telemetry';
+import {
   hasNativeAlarms,
   getAlarmSoundTitle,
   openAlarmSoundSettings,
@@ -56,9 +61,11 @@ export default function SettingsScreen({ navigation }) {
   // Alarm tone lives in the phone's own notification settings; this only
   // shows it and opens the page. Re-read on return, since it is changed there.
   const [alarm, setAlarm] = useState(() => readAlarm());
+  const [diagnostics, setDiagnostics] = useState(() => diagnosticsEnabled());
 
   const load = useCallback(async () => {
     setDetails(await getMyDetails());
+    setDiagnostics(await loadDiagnosticsChoice());
     setLoading(false);
   }, []);
 
@@ -285,6 +292,25 @@ export default function SettingsScreen({ navigation }) {
             </View>
           </Card>
         ) : null}
+
+        <Card>
+          <CardTitle>Diagnostics</CardTitle>
+          <View style={styles.alarmRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.alarmLabel}>Send crash reports</Text>
+              <Text style={styles.alarmValue}>
+                Crashes and a count of actions, to find what breaks. No medicine
+                names, numbers or health readings are ever sent.
+              </Text>
+            </View>
+            <Switch
+              value={diagnostics}
+              onValueChange={async (on) => setDiagnostics(await setDiagnosticsEnabled(on))}
+              trackColor={{ true: colors.emerald600 }}
+              accessibilityLabel="Send crash reports"
+            />
+          </View>
+        </Card>
 
         <Card>
           <CardTitle>Legal</CardTitle>

@@ -143,6 +143,21 @@ describe('CalendarScreen', () => {
     expect(screen.getByText('Partly taken')).toBeTruthy();
   });
 
+  // Was a pothole: deleting a medicine erased its dose history with it.
+  it('keeps a deleted medicine`s past days, and stops counting after it', async () => {
+    const user = await signIn();
+    const id = await addMedicine(null, { name: 'Metformin', times: ['08:00'], startDate: '2026-08-01' });
+    addedOn('2026-08-01');
+    dose(user, id, '2026-08-01', '08:00', 'taken');
+    // Deleted on the 3rd, after that day's dose was missed.
+    db().rows('medicines')[0].deleted_at = '2026-08-03T18:00:00.000Z';
+    await showScreen(CalendarScreen);
+
+    expect(barColour('2026-08-01', 'morning')).toBe('#dcfce7'); // taken, still there
+    expect(barColour('2026-08-03', 'morning')).toBe('#fee2e2'); // missed on its last day
+    expect(barColour('2026-08-04', 'morning')).toBe('#f1f5f9'); // nothing due after
+  });
+
   it('spells out a tapped day dose by dose', async () => {
     const { user, id } = await setup();
     dose(user, id, '2026-08-03', '20:00', 'taken');

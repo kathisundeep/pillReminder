@@ -34,6 +34,7 @@ const TABLES = [
   'medicines',
   'dose_history',
   'health_readings',
+  'app_events',
   'action_requests',
   'plans',
   'subscriptions',
@@ -141,6 +142,8 @@ export function createFakeSupabase(options = {}) {
     subscriptions: (r, me) => r.user_id === me,
     payment_methods: (r, me) => r.user_id === me,
     plans: () => true,
+    // diagnostics.sql: the app writes these and reads none of them.
+    app_events: () => false,
   };
 
   const WRITE_POLICIES = {
@@ -161,6 +164,7 @@ export function createFakeSupabase(options = {}) {
     payment_methods: () => false,
     guardian_links: () => false, // writes only via security-definer RPC
     plans: () => false,
+    app_events: (r, me) => r.user_id == null || r.user_id === me,
   };
 
   const visible = (table) => {
@@ -204,6 +208,7 @@ export function createFakeSupabase(options = {}) {
         if (f.type === 'eq') return v === f.val;
         if (f.type === 'lt') return v < f.val;
         if (f.type === 'in') return f.val.includes(v);
+        if (f.type === 'is') return f.val === null ? v == null : v === f.val;
         return true;
       });
 
@@ -334,6 +339,10 @@ export function createFakeSupabase(options = {}) {
       },
       in(col, val) {
         state.filters.push({ type: 'in', col, val });
+        return builder;
+      },
+      is(col, val) {
+        state.filters.push({ type: 'is', col, val });
         return builder;
       },
       order(col, opts = {}) {

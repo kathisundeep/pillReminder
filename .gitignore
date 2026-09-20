@@ -22,3 +22,7 @@ coverage/
 
 # Gradle output inside local native modules
 modules/**/build/
+
+# Update signing: the private key must never be committed. Back it up
+# somewhere safe — losing it means a new certificate and a new APK.
+keys/

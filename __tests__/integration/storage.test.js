@@ -215,15 +215,44 @@ describe('medicines CRUD', () => {
     expect((await getMedicines())[0].notificationIds).toEqual(['n1']);
   });
 
-  it('deletes a medicine and forgets its notification ids', async () => {
+  // Was a pothole: dose_history cascades from medicines, so removing the row
+  // erased every dose ever recorded for it and rewrote past calendar days.
+  it('marks a medicine deleted, keeping its history, and forgets its alarm ids', async () => {
     await signedIn();
     const id = await addMedicine(null, { name: 'A', times: ['08:00'] });
     await updateMedicine(null, id, { notificationIds: ['n1'] });
+    await recordDose(null, id, 'taken', '08:00');
+
     await deleteMedicine(null, id);
 
-    expect(db().rows('medicines')).toHaveLength(0);
+    expect(db().rows('medicines')).toHaveLength(1);
+    expect(db().rows('medicines')[0].deleted_at).toBeTruthy();
+    expect(db().rows('dose_history')).toHaveLength(1);
     const map = JSON.parse(await AsyncStorage.getItem('@pr_notif_ids'));
     expect(map[id]).toBeUndefined();
+  });
+
+  it('leaves a deleted medicine out of the list, unless asked for it', async () => {
+    await signedIn();
+    const keep = await addMedicine(null, { name: 'Keep', times: ['08:00'] });
+    const gone = await addMedicine(null, { name: 'Gone', times: ['09:00'] });
+    await deleteMedicine(null, gone);
+
+    expect((await getMedicines()).map((m) => m.id)).toEqual([keep]);
+    const all = await getMedicines(null, { includeDeleted: true });
+    expect(all.map((m) => m.name).sort()).toEqual(['Gone', 'Keep']);
+    expect(all.find((m) => m.id === gone).deletedAt).toBeTruthy();
+  });
+
+  it('keeps the offline cache to the active list, so no alarm is re-armed', async () => {
+    await signedIn();
+    const id = await addMedicine(null, { name: 'Gone', times: ['08:00'] });
+    await deleteMedicine(null, id);
+    await getMedicines(); // the call the app makes to arm alarms
+    await getMedicines(null, { includeDeleted: true }); // must not overwrite it
+
+    const cached = JSON.parse(await AsyncStorage.getItem('@pr_meds_cache'));
+    expect(cached).toEqual([]);
   });
 
   it('getMedicine finds one by id and returns null when absent', async () => {

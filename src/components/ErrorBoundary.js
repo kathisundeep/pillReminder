@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { reportCrash } from '../utils/telemetry';
 
 // Without this, any render-time throw shows a blank white screen in a release
 // build with no way out — for an app whose job is to remind someone to take
@@ -19,8 +20,10 @@ export default class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
-    // Kept deliberately simple: no crash reporter is wired up yet, and a
-    // console record is still what a `npx expo start` session will show.
+    // Sent to this project's own app_events table, so a crash on someone
+    // else's phone is visible at all. Diagnostics can be switched off in
+    // Settings, and nothing the user typed is included.
+    reportCrash(error, { where: 'render' });
     // eslint-disable-next-line no-console
     console.error('Unhandled render error', error, info?.componentStack);
   }

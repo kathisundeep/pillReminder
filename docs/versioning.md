@@ -69,9 +69,26 @@ test is the reminder to do the four steps above.
 ```bash
 npm run bump
 npm test
-eas update --branch preview
+npm run update      # eas update, signed with keys/private-key.pem
 ```
 
 Installed apps pick it up on next foreground. The version on the login screen
 is how you confirm it landed: if the number you just bumped to is showing, the
 update applied.
+
+## Signed updates
+
+Updates are signed. A build carries `certs/certificate.pem` and refuses any
+update that is not signed by the matching private key, so someone who takes the
+Expo account alone cannot push code to anyone's phone.
+
+- `keys/private-key.pem` is **not in git** (see `.gitignore`) — back it up
+  somewhere safe. Publishing needs it, which is why `npm run update` exists;
+  plain `eas update` publishes an update that signed builds will reject.
+- `certs/certificate.pem` **is** in git: it is public, and the build embeds it.
+- Losing the private key means generating a new pair
+  (`npx expo-updates codesigning:generate …`), pointing `app.json` at the new
+  certificate, and building a new APK — every installed app has the old
+  certificate and will refuse updates signed with anything else.
+- Builds made before signing was added (v0.0.8 and earlier) ignore the
+  signature; they keep updating as before.

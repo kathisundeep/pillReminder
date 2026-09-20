@@ -2,7 +2,7 @@
   "expo": {
     "name": "PillReminder",
     "slug": "pillreminder",
-    "version": "0.0.8",
+    "version": "0.0.9",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -28,7 +28,7 @@
     },
     "android": {
       "package": "com.pillreminder.app",
-      "versionCode": 12,
+      "versionCode": 13,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#4CAF50"
@@ -78,7 +78,12 @@
     "owner": "sandy419",
     "runtimeVersion": "1.2.0",
     "updates": {
-      "url": "https://u.expo.dev/a1f2f3fa-012b-43f4-bfa9-775ec35cfed6"
+      "url": "https://u.expo.dev/a1f2f3fa-012b-43f4-bfa9-775ec35cfed6",
+      "codeSigningCertificate": "./certs/certificate.pem",
+      "codeSigningMetadata": {
+        "keyid": "main",
+        "alg": "rsa-v1_5-sha256"
+      }
     }
   }
 }

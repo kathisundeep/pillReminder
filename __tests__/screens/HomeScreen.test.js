@@ -472,7 +472,7 @@ describe('HomeScreen — editing', () => {
     await press('🗑  Delete');
     expect(Alert.alert).toHaveBeenCalledWith(
       'Delete Aspirin?',
-      'This removes the medicine, its alarms and its dose history.',
+      'This stops its alarms. Doses you already recorded stay in your calendar and report.',
       expect.any(Array)
     );
     await act(async () => {
@@ -480,7 +480,7 @@ describe('HomeScreen — editing', () => {
     });
     await flush();
 
-    await waitFor(() => expect(db().rows('medicines')).toHaveLength(0));
+    await waitFor(() => expect(db().rows('medicines')[0].deleted_at).toBeTruthy());
   });
 
   it('deletes from the swipe button only after confirming', async () => {
@@ -490,20 +490,20 @@ describe('HomeScreen — editing', () => {
 
     // The red button sits under the row; a swipe uncovers it.
     await press(screen.getByLabelText('Delete Aspirin'));
-    expect(db().rows('medicines')).toHaveLength(1);
+    expect(db().rows('medicines')[0].deleted_at).toBeFalsy();
 
     await act(async () => {
       await globalThis.pressAlertButton('Cancel');
     });
     await flush();
-    expect(db().rows('medicines')).toHaveLength(1);
+    expect(db().rows('medicines')[0].deleted_at).toBeFalsy();
 
     await press(screen.getByLabelText('Delete Aspirin'));
     await act(async () => {
       await globalThis.pressAlertButton('Delete');
     });
     await flush();
-    await waitFor(() => expect(db().rows('medicines')).toHaveLength(0));
+    await waitFor(() => expect(db().rows('medicines')[0].deleted_at).toBeTruthy());
   });
 
   it('marks a whole slot from press and hold on its header', async () => {

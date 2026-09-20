@@ -176,12 +176,14 @@ export async function checkGuardianSession() {
 
 // In the same shape the patient's own screens use (rowToMed), so the Today
 // list and the calendar can be drawn by the same code for either.
-export async function getUserMedicines(userId) {
-  const { data } = await supabase
+export async function getUserMedicines(userId, { includeDeleted = false } = {}) {
+  let q = supabase
     .from('medicines')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
+  if (!includeDeleted) q = q.is('deleted_at', null);
+  const { data } = await q;
   return (data || []).map((r) => rowToMed(r));
 }
 

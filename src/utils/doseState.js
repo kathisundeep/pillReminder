@@ -81,6 +81,9 @@ export function isWithinCourse(med, now = new Date()) {
   }
   if (start && today < start) return false;
   if (med?.endDate && today > med.endDate) return false;
+  // A deleted medicine still counts on the day it was deleted — the doses it
+  // owed earlier that day really were due — and on no day after it.
+  if (med?.deletedAt && today > dayString(med.deletedAt)) return false;
   return true;
 }
 

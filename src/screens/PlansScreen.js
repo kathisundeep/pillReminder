@@ -18,6 +18,7 @@ import {
   PLAN_MONTHS,
 } from '../utils/subscription';
 import { Screen, Content, TitleHeader, Card, Button, Segmented } from '../components/ui';
+import { track } from '../utils/telemetry';
 import { colors, radius, shadow } from '../theme';
 
 const METHODS = [
@@ -91,6 +92,7 @@ export default function PlansScreen({ navigation }) {
       Alert.alert('Payment failed', res.error || 'Please try again.');
       return;
     }
+    track('plan_activated', { plan: checkout.id, method, test: true });
     setPaidUntil(res.current_period_end || null);
     setStage('done');
     load();
